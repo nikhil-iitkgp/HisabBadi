@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" width="192" height="192">
+  <rect width="192" height="192" rx="32" fill="#10b981"/>
+  <rect x="32" y="28" width="128" height="136" rx="14" fill="#ffffff"/>
+  <rect x="48" y="52" width="96" height="8" rx="4" fill="#0f172a"/>
+  <rect x="48" y="72" width="96" height="8" rx="4" fill="#0f172a"/>
+  <rect x="48" y="92" width="72" height="8" rx="4" fill="#0f172a"/>
+  <rect x="48" y="122" width="96" height="24" rx="8" fill="#dcfce7"/>
+  <text x="96" y="139" font-size="14" text-anchor="middle" fill="#065f46" font-family="Arial, sans-serif" font-weight="700">₹</text>
+</svg>

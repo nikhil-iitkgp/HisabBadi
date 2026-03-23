@@ -1,0 +1,11 @@
+.receipt-sheet {
+  width: 100%;
+  overflow-wrap: anywhere;
+}
+
+input,
+textarea,
+select,
+button {
+  font: inherit;
+}
