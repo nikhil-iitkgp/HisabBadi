@@ -1,43 +1,85 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import {
+  FormEvent,
+  KeyboardEvent as ReactKeyboardEvent,
+  startTransition,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import { computeReceipt } from "@/utils/calculations";
 import {
   FieldErrorMap,
+  Language,
   Labels,
   ReceiptData,
+  ReceiptFormDraft,
   TransactionFormValues,
+  WeightInputMode,
   getTodayDate,
 } from "@/utils/types";
 import Button from "./Button";
-import WeightInput from "./WeightInput";
+import WeightInput, { sanitizeWeightValue } from "./WeightInput";
 
 interface FormProps {
+  language: Language;
   labels: Labels;
   onGenerate: (receipt: ReceiptData) => void;
+  incomingDraft?: ReceiptFormDraft | null;
+  incomingDraftToken?: number;
+  onRestoreLastReceipt?: () => void;
+  hasLastReceipt?: boolean;
 }
 
 const DRAFT_KEY = "hisabbadi:receiptDraft";
+const PARTY_DEFAULTS_KEY = "hisabbadi:partyDefaults";
 const RECENT_BUYERS_KEY = "hisabbadi:recentBuyers";
 const RECENT_SELLERS_KEY = "hisabbadi:recentSellers";
 const RECENT_GRAINS_KEY = "hisabbadi:recentGrains";
+const RECENTS_RESET_VERSION_KEY = "hisabbadi:recentsResetVersion";
+const RECENTS_RESET_VERSION = "1";
 const FAVORITE_BUYERS_KEY = "hisabbadi:favoriteBuyers";
 const FAVORITE_SELLERS_KEY = "hisabbadi:favoriteSellers";
 const FAVORITE_GRAINS_KEY = "hisabbadi:favoriteGrains";
 const RECENT_MAX_ITEMS = 6;
-const GRAIN_OPTIONS = [
-  "Wheat",
-  "Mota Dhan",
-  "Mahin Dhan",
-  "Paan Mansoori Dhan",
-  "Kali Sarso",
-  "Peeli Sarso",
-  "Khari",
-  "Mahua",
-  "Jau",
-  "Mahin Chawal",
-  "Mota Chawal",
-];
+const CHIP_VISIBLE_LIMIT = 3;
+const GRAIN_OPTIONS_BY_LANGUAGE: Record<Language, string[]> = {
+  en: [
+    "Rice",
+    "Wheat",
+    "Paddy",
+    "Fine Rice (Mansoori)",
+    "Coarse Rice",
+    "Black Mustard",
+    "Yellow Mustard",
+    "Barley",
+    "Maize",
+    "Chickpea",
+    "Lentil",
+    "Pea",
+    "Sesame",
+    "Soybean",
+    "Mahua",
+  ],
+  hi: [
+    "Chawal (Rice)",
+    "Gehun (Wheat)",
+    "Dhan (Paddy)",
+    "Mahin Chawal (Fine Rice)",
+    "Mota Chawal (Coarse Rice)",
+    "Kali Sarso (Black Mustard)",
+    "Peeli Sarso (Yellow Mustard)",
+    "Jau (Barley)",
+    "Makka (Maize)",
+    "Chana (Chickpea)",
+    "Masoor (Lentil)",
+    "Matar (Pea)",
+    "Til (Sesame)",
+    "Soyabean (Soybean)",
+    "Mahua (Mahua)",
+  ],
+};
 const PARTY_SAMPLE_OPTIONS = [
   "Deepchanda Giraiya",
   "Vinod Seth Deoria",
@@ -48,6 +90,28 @@ const PARTY_SAMPLE_OPTIONS = [
 const RATE_SAMPLE_OPTIONS = ["15.50", "24.00", "28.50", "31.00", "36.00"];
 const REDUCTION_SAMPLE_OPTIONS = ["0.20", "0.30", "0.50", "0.75", "1.00"];
 const PALLEDARI_SAMPLE_OPTIONS = ["5", "7", "10", "12", "15"];
+const DEFAULT_WEIGHT_ROWS = 5;
+const DEFAULT_WEIGHT_COLUMNS = 5;
+
+type PartyDefaultsMap = Record<
+  string,
+  {
+    reductionPerBori: string;
+    palledariPerBori: string;
+  }
+>;
+
+const formatRecentValue = (value: string): string =>
+  value
+    .trim()
+    .replace(/\s+/g, " ")
+    .split(" ")
+    .map((part) =>
+      part
+        ? `${part.charAt(0).toUpperCase()}${part.slice(1).toLowerCase()}`
+        : "",
+    )
+    .join(" ");
 
 const readRecentList = (key: string): string[] => {
   if (typeof window === "undefined") {
@@ -61,20 +125,53 @@ const readRecentList = (key: string): string[] => {
 
   try {
     const parsed = JSON.parse(raw) as string[];
-    return parsed.filter(
-      (item) => typeof item === "string" && item.trim() !== "",
-    );
+    const normalized = parsed
+      .filter((item) => typeof item === "string" && item.trim() !== "")
+      .map((item) => formatRecentValue(item));
+
+    const seen = new Set<string>();
+    return normalized.filter((item) => {
+      const key = item.toLocaleLowerCase();
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    });
   } catch {
     window.localStorage.removeItem(key);
     return [];
   }
 };
 
+const ensureRecentsResetComplete = () => {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const completedVersion = window.localStorage.getItem(
+    RECENTS_RESET_VERSION_KEY,
+  );
+  if (completedVersion === RECENTS_RESET_VERSION) {
+    return;
+  }
+
+  window.localStorage.removeItem(RECENT_BUYERS_KEY);
+  window.localStorage.removeItem(RECENT_SELLERS_KEY);
+  window.localStorage.removeItem(RECENT_GRAINS_KEY);
+  window.localStorage.setItem(RECENTS_RESET_VERSION_KEY, RECENTS_RESET_VERSION);
+};
+
+const readRecentListWithReset = (key: string): string[] => {
+  ensureRecentsResetComplete();
+  return readRecentList(key);
+};
+
 const normalizeForMatch = (value: string): string =>
   value.trim().toLocaleLowerCase();
 
 const pushRecentItem = (existing: string[], value: string): string[] => {
-  const normalized = value.trim();
+  const normalized = formatRecentValue(value);
   if (!normalized) {
     return existing;
   }
@@ -95,16 +192,7 @@ const saveRecentList = (key: string, values: string[]) => {
   window.localStorage.setItem(key, JSON.stringify(values));
 };
 
-const readDraft = (): {
-  date?: string;
-  buyerName?: string;
-  sellerName?: string;
-  grainName?: string;
-  ratePerKg?: string;
-  reductionPerBori?: string;
-  palledariPerBori?: string;
-  weightValues?: string[];
-} | null => {
+const readDraft = (): ReceiptFormDraft | null => {
   if (typeof window === "undefined") {
     return null;
   }
@@ -115,23 +203,42 @@ const readDraft = (): {
   }
 
   try {
-    return JSON.parse(draft) as {
-      date?: string;
-      buyerName?: string;
-      sellerName?: string;
-      grainName?: string;
-      ratePerKg?: string;
-      reductionPerBori?: string;
-      palledariPerBori?: string;
-      weightValues?: string[];
-    };
+    return JSON.parse(draft) as ReceiptFormDraft;
   } catch {
     window.localStorage.removeItem(DRAFT_KEY);
     return null;
   }
 };
 
+const readPartyDefaults = (): PartyDefaultsMap => {
+  if (typeof window === "undefined") {
+    return {};
+  }
+
+  const raw = window.localStorage.getItem(PARTY_DEFAULTS_KEY);
+  if (!raw) {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as PartyDefaultsMap;
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    window.localStorage.removeItem(PARTY_DEFAULTS_KEY);
+    return {};
+  }
+};
+
+const writePartyDefaults = (defaults: PartyDefaultsMap) => {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.localStorage.setItem(PARTY_DEFAULTS_KEY, JSON.stringify(defaults));
+};
+
 const defaultValues = (): TransactionFormValues => ({
+  slipNumber: "",
   date: getTodayDate(),
   buyerName: "",
   sellerName: "",
@@ -139,19 +246,16 @@ const defaultValues = (): TransactionFormValues => ({
   ratePerKg: 0,
   reductionPerBori: 0,
   palledariPerBori: 0,
+  status: "final",
+  tags: [],
+  truckNumber: "",
+  qualityNote: "",
+  moistureNote: "",
+  brokerName: "",
+  commissionAmount: 0,
+  locked: false,
   weights: [],
 });
-
-type DraftShape = {
-  date?: string;
-  buyerName?: string;
-  sellerName?: string;
-  grainName?: string;
-  ratePerKg?: string;
-  reductionPerBori?: string;
-  palledariPerBori?: string;
-  weightValues?: string[];
-};
 
 const hasAnyDraftContent = (draft: {
   buyerName: string;
@@ -160,6 +264,11 @@ const hasAnyDraftContent = (draft: {
   ratePerKg: string;
   reductionPerBori: string;
   palledariPerBori: string;
+  commissionAmount?: string;
+  truckNumber?: string;
+  qualityNote?: string;
+  moistureNote?: string;
+  brokerName?: string;
   weightValues: string[];
 }): boolean => {
   if (
@@ -168,7 +277,12 @@ const hasAnyDraftContent = (draft: {
     draft.grainName.trim() ||
     draft.ratePerKg.trim() ||
     draft.reductionPerBori.trim() ||
-    draft.palledariPerBori.trim()
+    draft.palledariPerBori.trim() ||
+    draft.commissionAmount?.trim() ||
+    draft.truckNumber?.trim() ||
+    draft.qualityNote?.trim() ||
+    draft.moistureNote?.trim() ||
+    draft.brokerName?.trim()
   ) {
     return true;
   }
@@ -176,7 +290,15 @@ const hasAnyDraftContent = (draft: {
   return draft.weightValues.some((item) => item.trim() !== "");
 };
 
-export default function Form({ labels, onGenerate }: FormProps) {
+export default function Form({
+  language,
+  labels,
+  onGenerate,
+  incomingDraft,
+  incomingDraftToken = 0,
+  onRestoreLastReceipt,
+  hasLastReceipt = false,
+}: FormProps) {
   const draft = readDraft();
   const [date, setDate] = useState(draft?.date ?? getTodayDate());
   const [buyerName, setBuyerName] = useState(draft?.buyerName ?? "");
@@ -194,19 +316,37 @@ export default function Form({ labels, onGenerate }: FormProps) {
       ? draft.weightValues
       : [],
   );
-  const [errors, setErrors] = useState<FieldErrorMap>({});
-  const [isDraftReady, setIsDraftReady] = useState(Boolean(draft));
-  const [lastClearedDraft, setLastClearedDraft] = useState<DraftShape | null>(
-    null,
+  const [weightRows, setWeightRows] = useState(
+    draft?.weightRows && draft.weightRows > 0
+      ? draft.weightRows
+      : DEFAULT_WEIGHT_ROWS,
   );
+  const [weightColumns, setWeightColumns] = useState(
+    draft?.weightColumns && draft.weightColumns > 0
+      ? draft.weightColumns
+      : DEFAULT_WEIGHT_COLUMNS,
+  );
+  const [weightInputMode, setWeightInputMode] = useState<WeightInputMode>(
+    draft?.weightInputMode ?? "single",
+  );
+  const [tagsInput, setTagsInput] = useState((draft?.tags ?? []).join(", "));
+  const [truckNumber, setTruckNumber] = useState(draft?.truckNumber ?? "");
+  const [qualityNote, setQualityNote] = useState(draft?.qualityNote ?? "");
+  const [moistureNote, setMoistureNote] = useState(draft?.moistureNote ?? "");
+  const [brokerName, setBrokerName] = useState(draft?.brokerName ?? "");
+  const [commissionAmount, setCommissionAmount] = useState(
+    draft?.commissionAmount ?? "",
+  );
+  const [locked, setLocked] = useState(Boolean(draft?.locked));
+  const [errors, setErrors] = useState<FieldErrorMap>({});
   const [recentBuyers, setRecentBuyers] = useState<string[]>(() =>
-    readRecentList(RECENT_BUYERS_KEY),
+    readRecentListWithReset(RECENT_BUYERS_KEY),
   );
   const [recentSellers, setRecentSellers] = useState<string[]>(() =>
-    readRecentList(RECENT_SELLERS_KEY),
+    readRecentListWithReset(RECENT_SELLERS_KEY),
   );
   const [recentGrains, setRecentGrains] = useState<string[]>(() =>
-    readRecentList(RECENT_GRAINS_KEY),
+    readRecentListWithReset(RECENT_GRAINS_KEY),
   );
   const [favoriteBuyers, setFavoriteBuyers] = useState<string[]>(() =>
     readRecentList(FAVORITE_BUYERS_KEY),
@@ -217,6 +357,46 @@ export default function Form({ labels, onGenerate }: FormProps) {
   const [favoriteGrains, setFavoriteGrains] = useState<string[]>(() =>
     readRecentList(FAVORITE_GRAINS_KEY),
   );
+  const [partyDefaults, setPartyDefaults] = useState<PartyDefaultsMap>(() =>
+    readPartyDefaults(),
+  );
+  const [expandedChipGroups, setExpandedChipGroups] = useState<
+    Record<string, boolean>
+  >({});
+
+  const applyDraftState = (nextDraft: ReceiptFormDraft) => {
+    setDate(nextDraft.date ?? getTodayDate());
+    setBuyerName(nextDraft.buyerName ?? "");
+    setSellerName(nextDraft.sellerName ?? "");
+    setGrainName(nextDraft.grainName ?? "");
+    setRatePerKg(nextDraft.ratePerKg ?? "");
+    setReductionPerBori(nextDraft.reductionPerBori ?? "");
+    setPalledariPerBori(nextDraft.palledariPerBori ?? "");
+    setWeightValues(
+      nextDraft.weightValues && nextDraft.weightValues.length > 0
+        ? nextDraft.weightValues
+        : [],
+    );
+    setWeightRows(
+      nextDraft.weightRows && nextDraft.weightRows > 0
+        ? nextDraft.weightRows
+        : DEFAULT_WEIGHT_ROWS,
+    );
+    setWeightColumns(
+      nextDraft.weightColumns && nextDraft.weightColumns > 0
+        ? nextDraft.weightColumns
+        : DEFAULT_WEIGHT_COLUMNS,
+    );
+    setWeightInputMode(nextDraft.weightInputMode ?? "single");
+    setTagsInput((nextDraft.tags ?? []).join(", "));
+    setTruckNumber(nextDraft.truckNumber ?? "");
+    setQualityNote(nextDraft.qualityNote ?? "");
+    setMoistureNote(nextDraft.moistureNote ?? "");
+    setBrokerName(nextDraft.brokerName ?? "");
+    setCommissionAmount(nextDraft.commissionAmount ?? "");
+    setLocked(Boolean(nextDraft.locked));
+    setErrors({});
+  };
 
   const grainSuggestions = useMemo(() => {
     const normalizedFavorites = favoriteGrains
@@ -225,9 +405,9 @@ export default function Form({ labels, onGenerate }: FormProps) {
     const normalizedRecents = recentGrains
       .map((item) => item.trim())
       .filter((item) => item.length > 0);
-    const normalizedDefaults = GRAIN_OPTIONS.map((item) => item.trim()).filter(
-      (item) => item.length > 0,
-    );
+    const normalizedDefaults = GRAIN_OPTIONS_BY_LANGUAGE[language]
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0);
 
     const result: string[] = [];
     const seen = new Set<string>();
@@ -246,7 +426,7 @@ export default function Form({ labels, onGenerate }: FormProps) {
     normalizedDefaults.filter((item) => !seen.has(item)).forEach(addUnique);
 
     return result;
-  }, [favoriteGrains, recentGrains]);
+  }, [favoriteGrains, language, recentGrains]);
 
   const hasDraftContent = useMemo(
     () =>
@@ -257,6 +437,11 @@ export default function Form({ labels, onGenerate }: FormProps) {
         ratePerKg,
         reductionPerBori,
         palledariPerBori,
+        commissionAmount,
+        truckNumber,
+        qualityNote,
+        moistureNote,
+        brokerName,
         weightValues,
       }),
     [
@@ -266,6 +451,11 @@ export default function Form({ labels, onGenerate }: FormProps) {
       ratePerKg,
       reductionPerBori,
       palledariPerBori,
+      commissionAmount,
+      truckNumber,
+      qualityNote,
+      moistureNote,
+      brokerName,
       weightValues,
     ],
   );
@@ -283,7 +473,20 @@ export default function Form({ labels, onGenerate }: FormProps) {
       ratePerKg,
       reductionPerBori,
       palledariPerBori,
+      tags: tagsInput
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean),
+      truckNumber,
+      qualityNote,
+      moistureNote,
+      brokerName,
+      commissionAmount,
+      locked,
       weightValues,
+      weightRows,
+      weightColumns,
+      weightInputMode,
     };
 
     window.localStorage.setItem(DRAFT_KEY, JSON.stringify(draftPayload));
@@ -295,7 +498,17 @@ export default function Form({ labels, onGenerate }: FormProps) {
     ratePerKg,
     reductionPerBori,
     palledariPerBori,
+    tagsInput,
+    truckNumber,
+    qualityNote,
+    moistureNote,
+    brokerName,
+    commissionAmount,
+    locked,
     weightValues,
+    weightRows,
+    weightColumns,
+    weightInputMode,
   ]);
 
   useEffect(() => {
@@ -314,6 +527,16 @@ export default function Form({ labels, onGenerate }: FormProps) {
     };
   }, [hasDraftContent]);
 
+  useEffect(() => {
+    if (!incomingDraft || incomingDraftToken === 0) {
+      return;
+    }
+
+    startTransition(() => {
+      applyDraftState(incomingDraft);
+    });
+  }, [incomingDraft, incomingDraftToken]);
+
   const validWeights = useMemo(
     () =>
       weightValues
@@ -321,6 +544,63 @@ export default function Form({ labels, onGenerate }: FormProps) {
         .filter((value) => Number.isFinite(value) && value > 0),
     [weightValues],
   );
+
+  const totalWeightPreview = useMemo(
+    () => validWeights.reduce((sum, value) => sum + value, 0),
+    [validWeights],
+  );
+  const reductionPreview = useMemo(() => {
+    const parsed = Number.parseFloat(reductionPerBori);
+    return Number.isFinite(parsed) && parsed >= 0
+      ? parsed * validWeights.length
+      : 0;
+  }, [reductionPerBori, validWeights.length]);
+  const netWeightPreview = totalWeightPreview - reductionPreview;
+
+  const defaultsKey = useMemo(() => {
+    const normalizedBuyer = normalizeForMatch(buyerName);
+    const normalizedSeller = normalizeForMatch(sellerName);
+    const normalizedGrain = normalizeForMatch(grainName);
+
+    if (!normalizedBuyer || !normalizedSeller || !normalizedGrain) {
+      return "";
+    }
+
+    return `${normalizedBuyer}@@${normalizedSeller}@@${normalizedGrain}`;
+  }, [buyerName, sellerName, grainName]);
+
+  const validationWarnings = useMemo(() => {
+    const warnings: string[] = [];
+    const rate = Number.parseFloat(ratePerKg);
+    const palledari = Number.parseFloat(palledariPerBori);
+
+    if (Number.isFinite(rate) && rate > 200) {
+      warnings.push(labels.warningHighRate);
+    }
+
+    if (validWeights.some((weight) => weight > 200)) {
+      warnings.push(labels.warningHighWeight);
+    }
+
+    if (netWeightPreview < 0) {
+      warnings.push(labels.warningNegativeNet);
+    }
+
+    if (Number.isFinite(palledari) && palledari > 50) {
+      warnings.push(labels.warningHighPalledari);
+    }
+
+    return warnings;
+  }, [
+    labels.warningHighPalledari,
+    labels.warningHighRate,
+    labels.warningHighWeight,
+    labels.warningNegativeNet,
+    netWeightPreview,
+    palledariPerBori,
+    ratePerKg,
+    validWeights,
+  ]);
 
   const validate = (): FieldErrorMap => {
     const nextErrors: FieldErrorMap = {};
@@ -353,11 +633,77 @@ export default function Form({ labels, onGenerate }: FormProps) {
       nextErrors.palledariPerBori = labels.formErrors.invalidNumber;
     }
 
+    const commission = Number.parseFloat(commissionAmount);
+    if (
+      commissionAmount.trim() &&
+      (!Number.isFinite(commission) || commission < 0)
+    ) {
+      nextErrors.commissionAmount = labels.formErrors.invalidNumber;
+    }
+
     if (validWeights.length === 0) {
       nextErrors.weights = labels.formErrors.minOneWeight;
     }
 
     return nextErrors;
+  };
+
+  const focusFirstErrorField = (validationErrors: FieldErrorMap) => {
+    const orderedErrorKeys: Array<keyof FieldErrorMap> = [
+      "date",
+      "grainName",
+      "buyerName",
+      "sellerName",
+      "ratePerKg",
+      "reductionPerBori",
+      "palledariPerBori",
+      "weights",
+    ];
+
+    const fieldIdByKey: Record<string, string> = {
+      date: "form-date",
+      grainName: "form-grain",
+      buyerName: "form-buyer",
+      sellerName: "form-seller",
+      ratePerKg: "form-rate",
+      reductionPerBori: "form-reduction",
+      palledariPerBori: "form-palledari",
+      weights: "form-weights",
+    };
+
+    const firstErrorKey = orderedErrorKeys.find((key) =>
+      Boolean(validationErrors[key]),
+    );
+
+    if (!firstErrorKey) {
+      return;
+    }
+
+    const targetId = fieldIdByKey[firstErrorKey];
+    const targetElement = document.getElementById(targetId);
+    if (!targetElement) {
+      return;
+    }
+
+    targetElement.scrollIntoView({ behavior: "smooth", block: "center" });
+    if (
+      targetElement instanceof HTMLInputElement ||
+      targetElement instanceof HTMLTextAreaElement ||
+      targetElement instanceof HTMLSelectElement
+    ) {
+      targetElement.focus();
+    }
+  };
+
+  const handleFormKeyDownCapture = (
+    event: ReactKeyboardEvent<HTMLFormElement>,
+  ) => {
+    if (event.key !== "Enter" || (!event.ctrlKey && !event.metaKey)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.currentTarget.requestSubmit();
   };
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
@@ -367,11 +713,13 @@ export default function Form({ labels, onGenerate }: FormProps) {
     setErrors(validationErrors);
 
     if (Object.keys(validationErrors).length > 0) {
+      focusFirstErrorField(validationErrors);
       return;
     }
 
     const payload: TransactionFormValues = {
       ...defaultValues(),
+      slipNumber: "",
       date,
       buyerName: buyerName.trim(),
       sellerName: sellerName.trim(),
@@ -379,7 +727,26 @@ export default function Form({ labels, onGenerate }: FormProps) {
       ratePerKg: Number.parseFloat(ratePerKg),
       reductionPerBori: Number.parseFloat(reductionPerBori),
       palledariPerBori: Number.parseFloat(palledariPerBori),
+      status: "final",
+      tags: tagsInput
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean),
+      truckNumber: truckNumber.trim(),
+      qualityNote: qualityNote.trim(),
+      moistureNote: moistureNote.trim(),
+      brokerName: brokerName.trim(),
+      commissionAmount: commissionAmount.trim()
+        ? Number.parseFloat(commissionAmount)
+        : 0,
+      locked,
       weights: validWeights,
+      weightDisplayValues: weightValues.map((value) =>
+        sanitizeWeightValue(value).trim(),
+      ),
+      weightRows,
+      weightColumns,
+      weightInputMode,
     };
 
     const nextRecentBuyers = pushRecentItem(recentBuyers, payload.buyerName);
@@ -393,6 +760,18 @@ export default function Form({ labels, onGenerate }: FormProps) {
     saveRecentList(RECENT_SELLERS_KEY, nextRecentSellers);
     saveRecentList(RECENT_GRAINS_KEY, nextRecentGrains);
 
+    if (defaultsKey) {
+      const nextDefaults = {
+        ...partyDefaults,
+        [defaultsKey]: {
+          reductionPerBori: reductionPerBori.trim(),
+          palledariPerBori: palledariPerBori.trim(),
+        },
+      };
+      setPartyDefaults(nextDefaults);
+      writePartyDefaults(nextDefaults);
+    }
+
     onGenerate(computeReceipt(payload));
   };
 
@@ -400,19 +779,6 @@ export default function Form({ labels, onGenerate }: FormProps) {
     "h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm outline-none focus:border-emerald-500";
 
   const clearDraft = () => {
-    const snapshot: DraftShape = {
-      date,
-      buyerName,
-      sellerName,
-      grainName,
-      ratePerKg,
-      reductionPerBori,
-      palledariPerBori,
-      weightValues,
-    };
-
-    setLastClearedDraft(snapshot);
-
     if (typeof window !== "undefined") {
       window.localStorage.removeItem(DRAFT_KEY);
     }
@@ -424,30 +790,40 @@ export default function Form({ labels, onGenerate }: FormProps) {
     setRatePerKg("");
     setReductionPerBori("");
     setPalledariPerBori("");
+    setTagsInput("");
+    setTruckNumber("");
+    setQualityNote("");
+    setMoistureNote("");
+    setBrokerName("");
+    setCommissionAmount("");
+    setLocked(false);
     setWeightValues([]);
+    setWeightRows(DEFAULT_WEIGHT_ROWS);
+    setWeightColumns(DEFAULT_WEIGHT_COLUMNS);
+    setWeightInputMode("single");
     setErrors({});
-    setIsDraftReady(false);
   };
 
-  const undoClearDraft = () => {
-    if (!lastClearedDraft) {
-      return;
-    }
-
-    setDate(lastClearedDraft.date ?? getTodayDate());
-    setBuyerName(lastClearedDraft.buyerName ?? "");
-    setSellerName(lastClearedDraft.sellerName ?? "");
-    setGrainName(lastClearedDraft.grainName ?? "");
-    setRatePerKg(lastClearedDraft.ratePerKg ?? "");
-    setReductionPerBori(lastClearedDraft.reductionPerBori ?? "");
-    setPalledariPerBori(lastClearedDraft.palledariPerBori ?? "");
-    setWeightValues(
-      lastClearedDraft.weightValues && lastClearedDraft.weightValues.length > 0
-        ? lastClearedDraft.weightValues
-        : [],
-    );
-    setIsDraftReady(true);
-    setLastClearedDraft(null);
+  const resetSession = () => {
+    setDate(getTodayDate());
+    setBuyerName("");
+    setSellerName("");
+    setGrainName("");
+    setRatePerKg("");
+    setReductionPerBori("");
+    setPalledariPerBori("");
+    setTagsInput("");
+    setTruckNumber("");
+    setQualityNote("");
+    setMoistureNote("");
+    setBrokerName("");
+    setCommissionAmount("");
+    setLocked(false);
+    setWeightValues([]);
+    setWeightRows(DEFAULT_WEIGHT_ROWS);
+    setWeightColumns(DEFAULT_WEIGHT_COLUMNS);
+    setWeightInputMode("single");
+    setErrors({});
   };
 
   const toggleFavorite = (
@@ -516,24 +892,48 @@ export default function Form({ labels, onGenerate }: FormProps) {
     </div>
   );
 
+  const toggleChipGroup = (groupKey: string) => {
+    setExpandedChipGroups((prev) => ({
+      ...prev,
+      [groupKey]: !prev[groupKey],
+    }));
+  };
+
+  const getVisibleChips = (groupKey: string, items: string[]) => {
+    if (expandedChipGroups[groupKey] || items.length <= CHIP_VISIBLE_LIMIT) {
+      return items;
+    }
+
+    return items.slice(0, CHIP_VISIBLE_LIMIT);
+  };
+
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
-      <div className="flex flex-col gap-2 rounded-xl border border-slate-200 bg-slate-50/70 p-3 text-xs sm:flex-row sm:items-center sm:justify-end">
-        <div className="flex items-center gap-3">
-          {isDraftReady ? (
-            <span className="font-medium text-emerald-700">
-              {labels.draftReady}
-            </span>
-          ) : null}
-          {lastClearedDraft ? (
-            <button
-              type="button"
-              onClick={undoClearDraft}
-              className="text-xs font-semibold text-emerald-700 hover:text-emerald-800"
-            >
-              {labels.undoClearDraft}
-            </button>
-          ) : null}
+    <form
+      id="receipt-form"
+      onSubmit={handleSubmit}
+      onKeyDownCapture={handleFormKeyDownCapture}
+      className="space-y-3"
+    >
+      <div className="flex flex-col gap-2 rounded-xl border border-slate-200 bg-slate-50/70 p-2.5 text-xs sm:flex-row sm:items-center sm:justify-end">
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="rounded-full bg-emerald-50 px-2.5 py-1 font-medium text-emerald-700">
+            Saved
+          </span>
+          <button
+            type="button"
+            onClick={onRestoreLastReceipt}
+            disabled={!hasLastReceipt || !onRestoreLastReceipt}
+            className="text-xs font-semibold text-blue-600 hover:text-blue-700 disabled:cursor-not-allowed disabled:text-slate-400"
+          >
+            {labels.restoreLastReceipt}
+          </button>
+          <button
+            type="button"
+            onClick={resetSession}
+            className="text-xs font-semibold text-slate-600 hover:text-slate-800"
+          >
+            Session reset
+          </button>
           <button
             type="button"
             onClick={clearDraft}
@@ -544,12 +944,13 @@ export default function Form({ labels, onGenerate }: FormProps) {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+      <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
         <label className="space-y-1">
           <span className="text-xs font-medium text-slate-700">
             {labels.date}
           </span>
           <input
+            id="form-date"
             type="date"
             className={fieldClass}
             value={date}
@@ -565,6 +966,7 @@ export default function Form({ labels, onGenerate }: FormProps) {
             {labels.grain}
           </span>
           <input
+            id="form-grain"
             type="text"
             list="grain-options-list"
             className={fieldClass}
@@ -583,7 +985,7 @@ export default function Form({ labels, onGenerate }: FormProps) {
               <span className="w-full text-[11px] font-semibold text-emerald-700">
                 {labels.favoriteGrains}
               </span>
-              {favoriteGrains.map((item) => (
+              {getVisibleChips("favoriteGrains", favoriteGrains).map((item) => (
                 <Chip
                   key={`fav-grain-${item}`}
                   value={item}
@@ -592,6 +994,17 @@ export default function Form({ labels, onGenerate }: FormProps) {
                   onTogglePin={() => toggleFavorite("grains", item)}
                 />
               ))}
+              {favoriteGrains.length > CHIP_VISIBLE_LIMIT ? (
+                <button
+                  type="button"
+                  onClick={() => toggleChipGroup("favoriteGrains")}
+                  className="rounded-full border border-slate-300 px-2 py-0.5 text-[10px] font-semibold text-slate-600"
+                >
+                  {expandedChipGroups.favoriteGrains
+                    ? "Less"
+                    : `+${favoriteGrains.length - CHIP_VISIBLE_LIMIT} more`}
+                </button>
+              ) : null}
             </div>
           ) : null}
           {recentGrains.length > 0 ? (
@@ -599,7 +1012,7 @@ export default function Form({ labels, onGenerate }: FormProps) {
               <span className="w-full text-[11px] font-semibold text-slate-500">
                 {labels.recentGrains}
               </span>
-              {recentGrains.map((item) => (
+              {getVisibleChips("recentGrains", recentGrains).map((item) => (
                 <Chip
                   key={`grain-${item}`}
                   value={item}
@@ -608,6 +1021,17 @@ export default function Form({ labels, onGenerate }: FormProps) {
                   onTogglePin={() => toggleFavorite("grains", item)}
                 />
               ))}
+              {recentGrains.length > CHIP_VISIBLE_LIMIT ? (
+                <button
+                  type="button"
+                  onClick={() => toggleChipGroup("recentGrains")}
+                  className="rounded-full border border-slate-300 px-2 py-0.5 text-[10px] font-semibold text-slate-600"
+                >
+                  {expandedChipGroups.recentGrains
+                    ? "Less"
+                    : `+${recentGrains.length - CHIP_VISIBLE_LIMIT} more`}
+                </button>
+              ) : null}
             </div>
           ) : null}
           {errors.grainName ? (
@@ -620,6 +1044,7 @@ export default function Form({ labels, onGenerate }: FormProps) {
             {labels.buyer}
           </span>
           <input
+            id="form-buyer"
             type="text"
             list="buyer-options"
             className={fieldClass}
@@ -643,7 +1068,7 @@ export default function Form({ labels, onGenerate }: FormProps) {
               <span className="w-full text-[11px] font-semibold text-emerald-700">
                 {labels.favoriteBuyers}
               </span>
-              {favoriteBuyers.map((item) => (
+              {getVisibleChips("favoriteBuyers", favoriteBuyers).map((item) => (
                 <Chip
                   key={`fav-buyer-${item}`}
                   value={item}
@@ -652,6 +1077,17 @@ export default function Form({ labels, onGenerate }: FormProps) {
                   onTogglePin={() => toggleFavorite("buyers", item)}
                 />
               ))}
+              {favoriteBuyers.length > CHIP_VISIBLE_LIMIT ? (
+                <button
+                  type="button"
+                  onClick={() => toggleChipGroup("favoriteBuyers")}
+                  className="rounded-full border border-slate-300 px-2 py-0.5 text-[10px] font-semibold text-slate-600"
+                >
+                  {expandedChipGroups.favoriteBuyers
+                    ? "Less"
+                    : `+${favoriteBuyers.length - CHIP_VISIBLE_LIMIT} more`}
+                </button>
+              ) : null}
             </div>
           ) : null}
           {recentBuyers.length > 0 ? (
@@ -659,7 +1095,7 @@ export default function Form({ labels, onGenerate }: FormProps) {
               <span className="w-full text-[11px] font-semibold text-slate-500">
                 {labels.recentBuyers}
               </span>
-              {recentBuyers.map((item) => (
+              {getVisibleChips("recentBuyers", recentBuyers).map((item) => (
                 <Chip
                   key={`buyer-${item}`}
                   value={item}
@@ -668,6 +1104,17 @@ export default function Form({ labels, onGenerate }: FormProps) {
                   onTogglePin={() => toggleFavorite("buyers", item)}
                 />
               ))}
+              {recentBuyers.length > CHIP_VISIBLE_LIMIT ? (
+                <button
+                  type="button"
+                  onClick={() => toggleChipGroup("recentBuyers")}
+                  className="rounded-full border border-slate-300 px-2 py-0.5 text-[10px] font-semibold text-slate-600"
+                >
+                  {expandedChipGroups.recentBuyers
+                    ? "Less"
+                    : `+${recentBuyers.length - CHIP_VISIBLE_LIMIT} more`}
+                </button>
+              ) : null}
             </div>
           ) : null}
           {errors.buyerName ? (
@@ -680,6 +1127,7 @@ export default function Form({ labels, onGenerate }: FormProps) {
             {labels.seller}
           </span>
           <input
+            id="form-seller"
             type="text"
             list="seller-options"
             className={fieldClass}
@@ -703,15 +1151,28 @@ export default function Form({ labels, onGenerate }: FormProps) {
               <span className="w-full text-[11px] font-semibold text-emerald-700">
                 {labels.favoriteSellers}
               </span>
-              {favoriteSellers.map((item) => (
-                <Chip
-                  key={`fav-seller-${item}`}
-                  value={item}
-                  onClick={() => setSellerName(item)}
-                  pinned
-                  onTogglePin={() => toggleFavorite("sellers", item)}
-                />
-              ))}
+              {getVisibleChips("favoriteSellers", favoriteSellers).map(
+                (item) => (
+                  <Chip
+                    key={`fav-seller-${item}`}
+                    value={item}
+                    onClick={() => setSellerName(item)}
+                    pinned
+                    onTogglePin={() => toggleFavorite("sellers", item)}
+                  />
+                ),
+              )}
+              {favoriteSellers.length > CHIP_VISIBLE_LIMIT ? (
+                <button
+                  type="button"
+                  onClick={() => toggleChipGroup("favoriteSellers")}
+                  className="rounded-full border border-slate-300 px-2 py-0.5 text-[10px] font-semibold text-slate-600"
+                >
+                  {expandedChipGroups.favoriteSellers
+                    ? "Less"
+                    : `+${favoriteSellers.length - CHIP_VISIBLE_LIMIT} more`}
+                </button>
+              ) : null}
             </div>
           ) : null}
           {recentSellers.length > 0 ? (
@@ -719,7 +1180,7 @@ export default function Form({ labels, onGenerate }: FormProps) {
               <span className="w-full text-[11px] font-semibold text-slate-500">
                 {labels.recentSellers}
               </span>
-              {recentSellers.map((item) => (
+              {getVisibleChips("recentSellers", recentSellers).map((item) => (
                 <Chip
                   key={`seller-${item}`}
                   value={item}
@@ -728,6 +1189,17 @@ export default function Form({ labels, onGenerate }: FormProps) {
                   onTogglePin={() => toggleFavorite("sellers", item)}
                 />
               ))}
+              {recentSellers.length > CHIP_VISIBLE_LIMIT ? (
+                <button
+                  type="button"
+                  onClick={() => toggleChipGroup("recentSellers")}
+                  className="rounded-full border border-slate-300 px-2 py-0.5 text-[10px] font-semibold text-slate-600"
+                >
+                  {expandedChipGroups.recentSellers
+                    ? "Less"
+                    : `+${recentSellers.length - CHIP_VISIBLE_LIMIT} more`}
+                </button>
+              ) : null}
             </div>
           ) : null}
           {errors.sellerName ? (
@@ -740,6 +1212,7 @@ export default function Form({ labels, onGenerate }: FormProps) {
             {labels.rate}
           </span>
           <input
+            id="form-rate"
             type="number"
             step="0.01"
             min="0.01"
@@ -765,6 +1238,7 @@ export default function Form({ labels, onGenerate }: FormProps) {
             {labels.reduction}
           </span>
           <input
+            id="form-reduction"
             type="number"
             step="0.01"
             min="0"
@@ -790,6 +1264,7 @@ export default function Form({ labels, onGenerate }: FormProps) {
             {labels.palledari}
           </span>
           <input
+            id="form-palledari"
             type="number"
             step="0.01"
             min="0"
@@ -811,15 +1286,45 @@ export default function Form({ labels, onGenerate }: FormProps) {
         </label>
       </div>
 
-      <WeightInput
-        label={labels.weights}
-        values={weightValues}
-        onChange={setWeightValues}
-        error={errors.weights}
-        bulkWeightLabel={labels.bulkWeightLabel}
-        bulkWeightPlaceholder={labels.bulkWeightPlaceholder}
-        clearWeightsLabel={labels.clearWeights}
-      />
+      {validationWarnings.length > 0 ? (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50/80 p-3">
+          <p className="mb-1 text-xs font-semibold text-amber-800">
+            {labels.suspiciousValues}
+          </p>
+          <div className="space-y-1">
+            {validationWarnings.map((warning) => (
+              <p key={warning} className="text-xs text-amber-700">
+                {warning}
+              </p>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      <div id="form-weights">
+        <WeightInput
+          label={labels.weights}
+          values={weightValues}
+          onChange={setWeightValues}
+          rows={weightRows}
+          columns={weightColumns}
+          onRowsChange={setWeightRows}
+          onColumnsChange={setWeightColumns}
+          mode={weightInputMode}
+          onModeChange={setWeightInputMode}
+          error={errors.weights}
+          bulkWeightLabel={labels.bulkWeightLabel}
+          bulkWeightPlaceholder={labels.bulkWeightPlaceholder}
+          clearWeightsLabel={labels.clearWeights}
+          undoLastWeightLabel={labels.undoLastWeight}
+          weightInputModeLabel={labels.weightInputModeLabel}
+          singleRowModeLabel={labels.singleRowMode}
+          tableModeLabel={labels.tableMode}
+          rowsLabel={labels.rows}
+          columnsLabel={labels.columns}
+          gridHint={labels.weightGridHint}
+        />
+      </div>
 
       <Button type="submit" fullWidth>
         {labels.generateReceipt}

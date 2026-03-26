@@ -62,8 +62,18 @@ body {
     border-radius: 0 !important;
     box-shadow: none !important;
     padding: 8px !important;
-    page-break-inside: avoid;
-    break-inside: avoid;
+    page-break-inside: auto;
+    break-inside: auto;
+  }
+
+  .receipt-weight-grid-shell {
+    max-height: none !important;
+    overflow: visible !important;
+    padding-right: 0 !important;
+  }
+
+  .receipt-weight-grid {
+    min-height: 0 !important;
   }
 
   body.compact-print-mode .receipt-sheet {

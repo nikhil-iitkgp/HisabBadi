@@ -17,6 +17,7 @@ import {
   LANGUAGE_LABELS,
   Language,
   ReceiptData,
+  ReceiptFormDraft,
   SettlementPerspective,
   SettlementSummary,
 } from "@/utils/types";
@@ -42,7 +43,52 @@ type ActionKey =
 type ActionStatus = "idle" | "loading" | "success";
 
 const RECEIPT_HISTORY_KEY = "hisabbadi:receiptHistory";
+const LAST_RECEIPT_KEY = "hisabbadi:lastReceipt";
 const Form = dynamic(() => import("@/components/Form"), { ssr: false });
+
+const toSafeFileNamePart = (value: string): string =>
+  value
+    .trim()
+    .replace(/[<>:"/\\|?*\u0000-\u001F]/g, "-")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "") || "receipt";
+
+const getFileTimestamp = (): string => {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  const hours = String(now.getHours()).padStart(2, "0");
+  const minutes = String(now.getMinutes()).padStart(2, "0");
+  const seconds = String(now.getSeconds()).padStart(2, "0");
+  return `${year}${month}${day}-${hours}${minutes}${seconds}`;
+};
+
+const buildReceiptFileStem = (currentReceipt: ReceiptData): string =>
+  `receipt-${toSafeFileNamePart(currentReceipt.buyerName)}-${toSafeFileNamePart(currentReceipt.sellerName)}-${toSafeFileNamePart(currentReceipt.grainName)}-${getFileTimestamp()}`;
+
+const buildSettlementFileStem = (
+  currentSettlement: SettlementSummary,
+): string =>
+  `settlement-${toSafeFileNamePart(currentSettlement.primaryPartyName)}-${getFileTimestamp()}`;
+
+const receiptToDraft = (receipt: ReceiptData): ReceiptFormDraft => ({
+  slipNumber: "",
+  date: receipt.date,
+  buyerName: receipt.buyerName,
+  sellerName: receipt.sellerName,
+  grainName: receipt.grainName,
+  ratePerKg: receipt.ratePerKg.toFixed(2),
+  reductionPerBori: receipt.reductionPerBori.toFixed(2),
+  palledariPerBori: receipt.palledariPerBori.toFixed(2),
+  weightValues: receipt.weightDisplayValues?.length
+    ? [...receipt.weightDisplayValues]
+    : receipt.weights.map(String),
+  weightRows: receipt.weightRows ?? 1,
+  weightColumns: receipt.weightColumns ?? Math.max(receipt.boriCount, 1),
+  weightInputMode: receipt.weightInputMode ?? "single",
+});
 
 export default function Home() {
   const [language, setLanguage] = useState<Language>("en");
@@ -54,12 +100,20 @@ export default function Home() {
     "receipt" | "settlement" | null
   >(null);
   const [compactPrintMode, setCompactPrintMode] = useState(false);
+  const [showSettlementWeights, setShowSettlementWeights] = useState(false);
+  const [isExportMode, setIsExportMode] = useState(false);
   const [isProcessingPng, setIsProcessingPng] = useState(false);
   const [toast, setToast] = useState<ToastState>(null);
   const [receiptHistory, setReceiptHistory] = useState<ReceiptHistoryItem[]>(
     [],
   );
-  const [historySearch, setHistorySearch] = useState("");
+  const [lastSavedReceipt, setLastSavedReceipt] = useState<ReceiptData | null>(
+    null,
+  );
+  const [incomingDraft, setIncomingDraft] = useState<ReceiptFormDraft | null>(
+    null,
+  );
+  const [incomingDraftToken, setIncomingDraftToken] = useState(0);
   const [selectedSettlementSeller, setSelectedSettlementSeller] = useState("");
   const [selectedSettlementBuyer, setSelectedSettlementBuyer] = useState("");
   const [selectedSettlementIds, setSelectedSettlementIds] = useState<string[]>(
@@ -75,61 +129,41 @@ export default function Home() {
     whatsappPng: "idle",
     downloadPng: "idle",
   });
+
   const receiptCardRef = useRef<HTMLDivElement | null>(null);
   const receiptSectionRef = useRef<HTMLElement | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
   const labels = useMemo(() => LANGUAGE_LABELS[language], [language]);
-  const filteredHistory = useMemo(() => {
-    const query = historySearch.trim().toLowerCase();
-    if (!query) {
-      return receiptHistory;
-    }
-
-    return receiptHistory.filter((item) => {
-      const haystack = [
-        item.receipt.buyerName,
-        item.receipt.sellerName,
-        item.receipt.grainName,
-      ]
-        .join(" ")
-        .toLowerCase();
-      return haystack.includes(query);
-    });
-  }, [historySearch, receiptHistory]);
-
+  const filteredHistory = useMemo(() => receiptHistory, [receiptHistory]);
   const uniqueSellers = useMemo(
     () =>
       Array.from(
         new Set(
-          receiptHistory
+          filteredHistory
             .map((item) => item.receipt.sellerName.trim())
             .filter(Boolean),
         ),
-      ).sort((left, right) => left.localeCompare(right)),
-    [receiptHistory],
+      ).sort((a, b) => a.localeCompare(b)),
+    [filteredHistory],
   );
-
   const uniqueBuyers = useMemo(
     () =>
       Array.from(
         new Set(
-          receiptHistory
+          filteredHistory
             .map((item) => item.receipt.buyerName.trim())
             .filter(Boolean),
         ),
-      ).sort((left, right) => left.localeCompare(right)),
-    [receiptHistory],
+      ).sort((a, b) => a.localeCompare(b)),
+    [filteredHistory],
   );
-
   const selectedSettlementParty =
     settlementPerspective === "seller"
       ? selectedSettlementSeller
       : selectedSettlementBuyer;
-
   const selectedSettlementReceipts = useMemo(
     () =>
-      receiptHistory
+      filteredHistory
         .filter(
           (item) =>
             selectedSettlementIds.includes(item.id) &&
@@ -141,133 +175,140 @@ export default function Home() {
         )
         .map((item) => item.receipt),
     [
-      receiptHistory,
+      filteredHistory,
+      selectedSettlementBuyer,
       selectedSettlementIds,
       selectedSettlementSeller,
-      selectedSettlementBuyer,
       settlementPerspective,
     ],
   );
-
   const selectableSellerReceiptIds = useMemo(
     () =>
-      receiptHistory
-        .filter((item) => {
-          if (settlementPerspective === "seller") {
-            return (
-              item.receipt.sellerName.trim() === selectedSettlementSeller.trim()
-            );
-          }
-          return (
-            item.receipt.buyerName.trim() === selectedSettlementBuyer.trim()
-          );
-        })
+      filteredHistory
+        .filter((item) =>
+          settlementPerspective === "seller"
+            ? item.receipt.sellerName.trim() === selectedSettlementSeller.trim()
+            : item.receipt.buyerName.trim() === selectedSettlementBuyer.trim(),
+        )
         .map((item) => item.id),
     [
-      receiptHistory,
-      selectedSettlementSeller,
+      filteredHistory,
       selectedSettlementBuyer,
+      selectedSettlementSeller,
       settlementPerspective,
     ],
   );
-
   const latestSelectableSellerReceiptIds = useMemo(
     () =>
-      receiptHistory
-        .filter((item) => {
-          if (settlementPerspective === "seller") {
-            return (
-              item.receipt.sellerName.trim() === selectedSettlementSeller.trim()
-            );
-          }
-          return (
-            item.receipt.buyerName.trim() === selectedSettlementBuyer.trim()
-          );
-        })
-        .sort((left, right) => right.createdAt - left.createdAt)
+      filteredHistory
+        .filter((item) =>
+          settlementPerspective === "seller"
+            ? item.receipt.sellerName.trim() === selectedSettlementSeller.trim()
+            : item.receipt.buyerName.trim() === selectedSettlementBuyer.trim(),
+        )
+        .sort((a, b) => b.createdAt - a.createdAt)
         .map((item) => item.id),
     [
-      receiptHistory,
-      selectedSettlementSeller,
+      filteredHistory,
       selectedSettlementBuyer,
+      selectedSettlementSeller,
       settlementPerspective,
     ],
   );
-
   const selectedSettlementCounterpartyCount = useMemo(
     () =>
       new Set(
-        selectedSettlementReceipts.map((receipt) =>
+        selectedSettlementReceipts.map((currentReceipt) =>
           settlementPerspective === "seller"
-            ? receipt.buyerName.trim()
-            : receipt.sellerName.trim(),
+            ? currentReceipt.buyerName.trim()
+            : currentReceipt.sellerName.trim(),
         ),
       ).size,
     [selectedSettlementReceipts, settlementPerspective],
   );
-
   const selectedSettlementCollection = useMemo(
     () =>
       selectedSettlementReceipts.reduce(
-        (sum, receipt) => sum + receipt.finalPayment,
+        (sum, currentReceipt) => sum + currentReceipt.finalPayment,
         0,
       ),
     [selectedSettlementReceipts],
   );
-
   useEffect(() => {
-    if (typeof document === "undefined") {
-      return;
-    }
-
+    if (typeof document === "undefined") return;
     document.body.classList.toggle("compact-print-mode", compactPrintMode);
-    return () => {
-      document.body.classList.remove("compact-print-mode");
-    };
+    return () => document.body.classList.remove("compact-print-mode");
   }, [compactPrintMode]);
 
   useEffect(() => {
-    if (typeof window === "undefined") {
+    if (
+      typeof window === "undefined" ||
+      !("serviceWorker" in navigator) ||
+      (window.location.hostname !== "localhost" &&
+        window.location.hostname !== "127.0.0.1")
+    )
       return;
-    }
+    void navigator.serviceWorker.getRegistrations().then((registrations) =>
+      registrations.forEach((registration) => {
+        void registration.unregister();
+      }),
+    );
+    if ("caches" in window)
+      void caches.keys().then((keys) =>
+        keys.forEach((key) => {
+          void caches.delete(key);
+        }),
+      );
+  }, []);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
     const historyRaw = window.localStorage.getItem(RECEIPT_HISTORY_KEY);
     if (historyRaw) {
       try {
-        const parsed = JSON.parse(historyRaw) as ReceiptHistoryItem[];
-        setReceiptHistory(Array.isArray(parsed) ? parsed : []);
+        setReceiptHistory(JSON.parse(historyRaw) as ReceiptHistoryItem[]);
       } catch {
         window.localStorage.removeItem(RECEIPT_HISTORY_KEY);
       }
     }
-
-    return () => {
-      if (toastTimerRef.current) {
-        clearTimeout(toastTimerRef.current);
-        toastTimerRef.current = null;
+    const lastReceiptRaw = window.localStorage.getItem(LAST_RECEIPT_KEY);
+    if (lastReceiptRaw) {
+      try {
+        setLastSavedReceipt(JSON.parse(lastReceiptRaw) as ReceiptData);
+      } catch {
+        window.localStorage.removeItem(LAST_RECEIPT_KEY);
       }
+    }
+    return () => {
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     };
   }, []);
 
   useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(
+        RECEIPT_HISTORY_KEY,
+        JSON.stringify(receiptHistory),
+      );
     }
-
-    window.localStorage.setItem(
-      RECEIPT_HISTORY_KEY,
-      JSON.stringify(receiptHistory),
-    );
   }, [receiptHistory]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!lastSavedReceipt) window.localStorage.removeItem(LAST_RECEIPT_KEY);
+    else
+      window.localStorage.setItem(
+        LAST_RECEIPT_KEY,
+        JSON.stringify(lastSavedReceipt),
+      );
+  }, [lastSavedReceipt]);
 
   const showToast = (
     message: string,
     tone: "success" | "error" | "info" = "info",
   ) => {
     setToast({ message, tone });
-    if (toastTimerRef.current) {
-      clearTimeout(toastTimerRef.current);
-    }
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     toastTimerRef.current = setTimeout(() => {
       setToast(null);
       toastTimerRef.current = null;
@@ -276,49 +317,45 @@ export default function Home() {
 
   const markAction = (key: ActionKey, status: ActionStatus) => {
     setActionStatus((prev) => ({ ...prev, [key]: status }));
-    if (status === "success") {
-      setTimeout(() => {
-        setActionStatus((prev) => ({ ...prev, [key]: "idle" }));
-      }, 1000);
-    }
+    if (status === "success")
+      setTimeout(
+        () => setActionStatus((prev) => ({ ...prev, [key]: "idle" })),
+        1000,
+      );
   };
 
   const actionLabel = (
     key: ActionKey,
     label: string,
     loadingText = "Working...",
-  ) => {
-    const status = actionStatus[key];
-    const icon = status === "loading" ? "⏳" : status === "success" ? "✓" : "";
-    const text = status === "loading" ? loadingText : label;
-
-    return (
-      <span className="inline-flex items-center gap-1.5">
-        {icon ? <span aria-hidden>{icon}</span> : null}
-        <span>{text}</span>
-      </span>
-    );
+  ) => <span>{actionStatus[key] === "loading" ? loadingText : label}</span>;
+  const pushIncomingDraft = (draft: ReceiptFormDraft) => {
+    setIncomingDraft(draft);
+    setIncomingDraftToken((prev) => prev + 1);
   };
 
   const handleGenerateReceipt = (data: ReceiptData) => {
     setReceipt(data);
+    setLastSavedReceipt(data);
     setSettlement(null);
     setActiveOutput("receipt");
-
-    const historyItem: ReceiptHistoryItem = {
-      id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-      createdAt: Date.now(),
-      receipt: data,
-    };
-
-    setReceiptHistory((prev) => [historyItem, ...prev]);
-    showToast("Receipt generated", "success");
-    setTimeout(() => {
-      receiptSectionRef.current?.scrollIntoView({
-        behavior: "smooth",
-        block: "start",
-      });
-    }, 80);
+    setReceiptHistory((prev) => [
+      {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        createdAt: Date.now(),
+        receipt: data,
+      },
+      ...prev,
+    ]);
+    showToast("Receipt saved to history.", "success");
+    setTimeout(
+      () =>
+        receiptSectionRef.current?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        }),
+      80,
+    );
   };
 
   const handleResetReceipt = () => {
@@ -330,32 +367,47 @@ export default function Home() {
   };
 
   const handlePrint = () => {
-    if (typeof window !== "undefined") {
-      markAction("printPdf", "success");
+    if (typeof window === "undefined" || typeof document === "undefined")
+      return;
+    const previousTitle = document.title;
+    const nextTitle =
+      activeOutput === "settlement" && settlement
+        ? buildSettlementFileStem(settlement)
+        : receipt
+          ? buildReceiptFileStem(receipt)
+          : "hisabbadi";
+    markAction("printPdf", "success");
+    setIsExportMode(true);
+    document.title = nextTitle;
+    window.setTimeout(() => {
       window.print();
-      showToast("Print dialog opened", "info");
-    }
+      window.setTimeout(() => {
+        setIsExportMode(false);
+        document.title = previousTitle;
+      }, 300);
+    }, 80);
+    showToast("Print dialog opened", "info");
   };
 
   const copyReceiptSummary = async () => {
-    if (typeof navigator === "undefined" || !navigator.clipboard) {
-      showToast("Clipboard not supported", "error");
-      return;
-    }
-
+    if (typeof navigator === "undefined" || !navigator.clipboard)
+      return showToast("Clipboard not supported", "error");
     const currentReceipt = activeOutput === "receipt" ? receipt : null;
     const currentSettlement = activeOutput === "settlement" ? settlement : null;
-    if (!currentReceipt && !currentSettlement) {
-      showToast("Generate a receipt first", "error");
-      return;
-    }
-
+    if (!currentReceipt && !currentSettlement)
+      return showToast("Generate a receipt first", "error");
     try {
       markAction("copy", "loading");
-      const summary = currentSettlement
+      const summaryText = currentSettlement
         ? buildSettlementSummaryText(currentSettlement, labels)
-        : buildReceiptSummaryText(currentReceipt!, labels);
-      await navigator.clipboard.writeText(summary);
+        : currentReceipt
+          ? buildReceiptSummaryText(currentReceipt, labels)
+          : "";
+      if (!summaryText) {
+        markAction("copy", "idle");
+        return showToast("Generate a receipt first", "error");
+      }
+      await navigator.clipboard.writeText(summaryText);
       markAction("copy", "success");
       showToast("Summary copied", "success");
     } catch {
@@ -367,69 +419,68 @@ export default function Home() {
   const openWhatsAppText = () => {
     const currentReceipt = activeOutput === "receipt" ? receipt : null;
     const currentSettlement = activeOutput === "settlement" ? settlement : null;
-
     if (
       (!currentReceipt && !currentSettlement) ||
       typeof window === "undefined"
-    ) {
-      showToast("Generate a receipt first", "error");
-      return;
-    }
-
+    )
+      return showToast("Generate a receipt first", "error");
     const summary = currentSettlement
       ? buildSettlementSummaryText(currentSettlement, labels)
-      : buildReceiptSummaryText(currentReceipt!, labels);
-    const encoded = encodeURIComponent(summary);
+      : currentReceipt
+        ? buildReceiptSummaryText(currentReceipt, labels)
+        : "";
+    if (!summary) {
+      return showToast("Generate a receipt first", "error");
+    }
     window.open(
-      `https://wa.me/?text=${encoded}`,
+      `https://wa.me/?text=${encodeURIComponent(summary)}`,
       "_blank",
       "noopener,noreferrer",
     );
     markAction("whatsapp", "success");
     showToast("WhatsApp text opened", "success");
   };
-
   const captureReceiptPng = async (): Promise<{
     dataUrl: string;
     file: File;
   }> => {
-    if (!receiptCardRef.current) {
-      throw new Error("Receipt unavailable");
-    }
-
-    if (typeof document !== "undefined" && "fonts" in document) {
+    if (!receiptCardRef.current) throw new Error("Receipt unavailable");
+    if (typeof document !== "undefined" && "fonts" in document)
       await document.fonts.ready;
+    setIsExportMode(true);
+    try {
+      await new Promise((resolve) => window.setTimeout(resolve, 100));
+      const dataUrl = await toPng(receiptCardRef.current, {
+        cacheBust: true,
+        pixelRatio: 2,
+        backgroundColor: "#ffffff",
+      });
+      const blob = await (await fetch(dataUrl)).blob();
+      const fileStem =
+        activeOutput === "settlement" && settlement
+          ? buildSettlementFileStem(settlement)
+          : activeOutput === "receipt" && receipt
+            ? buildReceiptFileStem(receipt)
+            : `hisabbadi-${getFileTimestamp()}`;
+      return {
+        dataUrl,
+        file: new File([blob], `${fileStem}.png`, { type: "image/png" }),
+      };
+    } finally {
+      setIsExportMode(false);
     }
-
-    const dataUrl = await toPng(receiptCardRef.current, {
-      cacheBust: true,
-      pixelRatio: 2,
-      backgroundColor: "#ffffff",
-    });
-
-    const response = await fetch(dataUrl);
-    const blob = await response.blob();
-    const file = new File([blob], "hisabbadi-receipt.png", {
-      type: "image/png",
-    });
-
-    return { dataUrl, file };
   };
 
   const downloadReceiptAsPng = async () => {
-    if (!receiptCardRef.current || typeof window === "undefined") {
-      showToast("Generate a receipt first", "error");
-      return;
-    }
-
+    if (!receiptCardRef.current || typeof window === "undefined")
+      return showToast("Generate a receipt first", "error");
     try {
       setIsProcessingPng(true);
       markAction("downloadPng", "loading");
-      const { dataUrl } = await captureReceiptPng();
-
+      const { dataUrl, file } = await captureReceiptPng();
       const anchor = document.createElement("a");
       anchor.href = dataUrl;
-      anchor.download = "hisabbadi-receipt.png";
+      anchor.download = file.name;
       anchor.click();
       markAction("downloadPng", "success");
       showToast("Image downloaded", "success");
@@ -444,66 +495,58 @@ export default function Home() {
   const openWhatsAppWithPng = async () => {
     const currentReceipt = activeOutput === "receipt" ? receipt : null;
     const currentSettlement = activeOutput === "settlement" ? settlement : null;
-
     if (
       !receiptCardRef.current ||
       (!currentReceipt && !currentSettlement) ||
       typeof window === "undefined"
-    ) {
-      showToast("Generate a receipt first", "error");
-      return;
-    }
-
+    )
+      return showToast("Generate a receipt first", "error");
     try {
       setIsProcessingPng(true);
       markAction("whatsappPng", "loading");
-      const { dataUrl } = await captureReceiptPng();
-
+      const { dataUrl, file } = await captureReceiptPng();
       const caption = currentSettlement
         ? [
             `${currentSettlement.perspective === "seller" ? labels.seller : labels.buyer}: ${currentSettlement.primaryPartyName}`,
             `${labels.selectedReceiptsCount}: ${currentSettlement.selectedReceipts}`,
             `${labels.finalCollection}: ${formatCurrency(currentSettlement.finalCollection)}`,
           ].join("\n")
-        : [
-            `${labels.buyer}: ${currentReceipt!.buyerName}`,
-            `${labels.seller}: ${currentReceipt!.sellerName}`,
-            `${labels.finalPayment}: ${formatCurrency(currentReceipt!.finalPayment)}`,
-          ].join("\n");
-
-      let isCaptionCopied = false;
+        : currentReceipt
+          ? [
+              `${labels.buyer}: ${currentReceipt.buyerName}`,
+              `${labels.seller}: ${currentReceipt.sellerName}`,
+              `${labels.finalPayment}: ${formatCurrency(currentReceipt.finalPayment)}`,
+            ].join("\n")
+          : "";
+      if (!caption) {
+        markAction("whatsappPng", "idle");
+        return showToast("Generate a receipt first", "error");
+      }
+      let copied = false;
       if (typeof navigator !== "undefined" && navigator.clipboard) {
         try {
           await navigator.clipboard.writeText(caption);
-          isCaptionCopied = true;
+          copied = true;
         } catch {
-          isCaptionCopied = false;
+          copied = false;
         }
       }
-
       const anchor = document.createElement("a");
       anchor.href = dataUrl;
-      anchor.download = "hisabbadi-receipt.png";
+      anchor.download = file.name;
       anchor.click();
-
       const message = encodeURIComponent(
-        isCaptionCopied
-          ? "Receipt PNG downloaded. Please attach as photo: hisabbadi-receipt.png (not as document).\n(Caption copied to clipboard. Paste it in chat.)"
-          : `Receipt PNG downloaded. Please attach as photo: hisabbadi-receipt.png (not as document).\n\n${caption}`,
+        copied
+          ? "Receipt PNG downloaded. Attach it as photo and paste copied caption."
+          : `Receipt PNG downloaded. Attach it as photo.\n\n${caption}`,
       );
       window.open(
         `https://wa.me/?text=${message}`,
         "_blank",
         "noopener,noreferrer",
       );
-
       markAction("whatsappPng", "success");
-      showToast(
-        isCaptionCopied
-          ? "WhatsApp opened. PNG downloaded and caption copied."
-          : "WhatsApp opened. PNG downloaded (caption in message).",
-        "success",
-      );
+      showToast("WhatsApp PNG prepared", "success");
     } catch {
       markAction("whatsappPng", "idle");
       showToast("Unable to prepare WhatsApp PNG", "error");
@@ -513,16 +556,23 @@ export default function Home() {
   };
 
   const loadFromHistory = (item: ReceiptHistoryItem) => {
+    pushIncomingDraft(receiptToDraft(item.receipt));
     setReceipt(item.receipt);
     setSettlement(null);
     setActiveOutput("receipt");
-    showToast("Loaded from history", "success");
-    setTimeout(() => {
-      receiptSectionRef.current?.scrollIntoView({
-        behavior: "smooth",
-        block: "start",
-      });
-    }, 80);
+    showToast("Receipt loaded into form", "success");
+    setTimeout(() => window.scrollTo({ behavior: "smooth", top: 0 }), 80);
+  };
+
+  const restoreLastReceipt = () => {
+    if (!lastSavedReceipt)
+      return showToast(labels.restoreLastReceiptEmpty, "info");
+    pushIncomingDraft(receiptToDraft(lastSavedReceipt));
+    setReceipt(lastSavedReceipt);
+    setSettlement(null);
+    setActiveOutput("receipt");
+    showToast("Last receipt restored", "success");
+    setTimeout(() => window.scrollTo({ top: 0, behavior: "smooth" }), 80);
   };
 
   const clearHistory = () => {
@@ -531,9 +581,7 @@ export default function Home() {
     setSettlement(null);
     setSelectedSettlementSeller("");
     setSelectedSettlementBuyer("");
-    if (activeOutput === "settlement") {
-      setActiveOutput(null);
-    }
+    if (activeOutput === "settlement") setActiveOutput(null);
     showToast("History cleared", "info");
   };
 
@@ -546,31 +594,24 @@ export default function Home() {
     setSelectedSettlementSeller("");
     setSelectedSettlementBuyer("");
   };
-
   const handleSettlementSellerChange = (value: string) => {
     setSelectedSettlementSeller(value);
     setSelectedSettlementBuyer("");
     setSelectedSettlementIds([]);
     setSettlement(null);
   };
-
   const handleSettlementBuyerChange = (value: string) => {
     setSelectedSettlementBuyer(value);
     setSelectedSettlementSeller("");
     setSelectedSettlementIds([]);
     setSettlement(null);
   };
-
   const toggleSettlementReceipt = (item: ReceiptHistoryItem) => {
     const canSelect =
       settlementPerspective === "seller"
         ? item.receipt.sellerName.trim() === selectedSettlementSeller.trim()
         : item.receipt.buyerName.trim() === selectedSettlementBuyer.trim();
-
-    if (!canSelect) {
-      return;
-    }
-
+    if (!canSelect) return;
     setSelectedSettlementIds((prev) =>
       prev.includes(item.id)
         ? prev.filter((existingId) => existingId !== item.id)
@@ -578,133 +619,63 @@ export default function Home() {
     );
     setSettlement(null);
   };
-
   const selectAllForSeller = () => {
-    if (!selectedSettlementParty.trim()) {
-      showToast(
+    if (!selectedSettlementParty.trim())
+      return showToast(
         settlementPerspective === "seller"
           ? labels.selectSeller
           : labels.selectBuyer,
         "info",
       );
-      return;
-    }
-
     setSelectedSettlementIds(selectableSellerReceiptIds);
     setSettlement(null);
   };
-
   const clearSettlementSelection = () => {
     setSelectedSettlementIds([]);
     setSettlement(null);
   };
-
   const selectLatestForSeller = (count: number) => {
-    if (!selectedSettlementParty.trim()) {
-      showToast(
+    if (!selectedSettlementParty.trim())
+      return showToast(
         settlementPerspective === "seller"
           ? labels.selectSeller
           : labels.selectBuyer,
         "info",
       );
-      return;
-    }
-
-    const nextSelection = latestSelectableSellerReceiptIds.slice(0, count);
-    setSelectedSettlementIds(nextSelection);
+    setSelectedSettlementIds(latestSelectableSellerReceiptIds.slice(0, count));
     setSettlement(null);
   };
-
   const generateSettlementReceipt = () => {
-    if (!selectedSettlementParty.trim()) {
-      showToast(
+    if (!selectedSettlementParty.trim())
+      return showToast(
         settlementPerspective === "seller"
           ? labels.selectSeller
           : labels.selectBuyer,
         "info",
       );
-      return;
-    }
-
-    if (selectedSettlementReceipts.length === 0) {
-      showToast(labels.noSettlementReceipts, "error");
-      return;
-    }
-
-    const nextSettlement = computeSettlementSummary(
-      selectedSettlementReceipts,
-      settlementPerspective,
-      selectedSettlementParty,
-    );
-
+    if (selectedSettlementReceipts.length === 0)
+      return showToast(labels.noSettlementReceipts, "error");
     setReceipt(null);
-    setSettlement(nextSettlement);
+    setSettlement(
+      computeSettlementSummary(
+        selectedSettlementReceipts,
+        settlementPerspective,
+        selectedSettlementParty,
+      ),
+    );
     setActiveOutput("settlement");
     showToast("Final settlement generated", "success");
-    setTimeout(() => {
-      receiptSectionRef.current?.scrollIntoView({
-        behavior: "smooth",
-        block: "start",
-      });
-    }, 80);
+    setTimeout(
+      () =>
+        receiptSectionRef.current?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        }),
+      80,
+    );
   };
-
-  const exportHistoryCsv = () => {
-    if (receiptHistory.length === 0 || typeof window === "undefined") {
-      showToast("No history to export", "info");
-      return;
-    }
-
-    const header = [
-      "CreatedAt",
-      "Date",
-      "Buyer",
-      "Seller",
-      "Grain",
-      "Bori",
-      "TotalWeight",
-      "ReducedWeight",
-      "NetWeight",
-      "Amount",
-      "TotalPalledari",
-      "FinalPayment",
-    ];
-
-    const quote = (value: string | number) =>
-      `"${String(value).replaceAll('"', '""')}"`;
-
-    const rows = receiptHistory.map((item) => [
-      new Date(item.createdAt).toISOString(),
-      item.receipt.date,
-      item.receipt.buyerName,
-      item.receipt.sellerName,
-      item.receipt.grainName,
-      item.receipt.boriCount,
-      item.receipt.totalWeight.toFixed(2),
-      item.receipt.reducedWeight.toFixed(2),
-      item.receipt.netWeight.toFixed(2),
-      item.receipt.amount.toFixed(2),
-      item.receipt.totalPalledari.toFixed(2),
-      item.receipt.finalPayment.toFixed(2),
-    ]);
-
-    const csv = [
-      header.map(quote).join(","),
-      ...rows.map((row) => row.map(quote).join(",")),
-    ].join("\n");
-
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = "hisabbadi-receipt-history.csv";
-    anchor.click();
-    URL.revokeObjectURL(url);
-    showToast("History CSV exported", "success");
-  };
-
   return (
-    <main className="mx-auto min-h-screen w-full max-w-screen-2xl px-2 py-3 sm:px-4 sm:py-6 lg:px-6">
+    <main className="mx-auto min-h-screen w-full max-w-screen-2xl px-2 py-3 pb-24 sm:px-4 sm:py-6 sm:pb-6 lg:px-6">
       <section className="no-print mb-3 rounded-3xl border border-slate-200/80 bg-white/95 p-2.5 shadow-lg shadow-slate-200/60 ring-1 ring-slate-100 sm:mb-4 sm:p-4">
         <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
           <div>
@@ -725,7 +696,6 @@ export default function Home() {
                 <option value="hi">Hinglish</option>
               </select>
             </label>
-
             <label className="flex items-center justify-between gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 lg:min-w-52">
               {labels.compactPrintMode}
               <input
@@ -746,50 +716,26 @@ export default function Home() {
             <h3 className="text-sm font-bold text-slate-800">
               {labels.receiptHistory}
             </h3>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={exportHistoryCsv}
-                className="text-xs font-semibold text-blue-600 hover:text-blue-700"
-              >
-                {labels.exportHistoryCsv}
-              </button>
-              <button
-                type="button"
-                onClick={clearHistory}
-                className="text-xs font-semibold text-red-600 hover:text-red-700"
-              >
-                {labels.clearHistory}
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={clearHistory}
+              className="text-xs font-semibold text-red-600 hover:text-red-700"
+            >
+              {labels.clearHistory}
+            </button>
           </div>
-          <input
-            value={historySearch}
-            onChange={(event) => setHistorySearch(event.target.value)}
-            placeholder={labels.historySearch}
-            aria-label={labels.historySearch}
-            className="mb-2 h-10 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm outline-none focus:border-emerald-500"
-          />
           <div className="mb-2 inline-flex rounded-xl border border-slate-200 bg-slate-100 p-1">
             <button
               type="button"
               onClick={() => handleSettlementPerspectiveChange("seller")}
-              className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${
-                settlementPerspective === "seller"
-                  ? "bg-white text-emerald-700 shadow-sm"
-                  : "text-slate-600"
-              }`}
+              className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${settlementPerspective === "seller" ? "bg-white text-emerald-700 shadow-sm" : "text-slate-600"}`}
             >
               {labels.settlementFromSeller}
             </button>
             <button
               type="button"
               onClick={() => handleSettlementPerspectiveChange("buyer")}
-              className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${
-                settlementPerspective === "buyer"
-                  ? "bg-white text-emerald-700 shadow-sm"
-                  : "text-slate-600"
-              }`}
+              className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${settlementPerspective === "buyer" ? "bg-white text-emerald-700 shadow-sm" : "text-slate-600"}`}
             >
               {labels.settlementFromBuyer}
             </button>
@@ -832,14 +778,12 @@ export default function Home() {
                 ))}
               </select>
             </label>
-
             <div className="flex items-center justify-between rounded-lg bg-white px-2 py-2 text-xs font-semibold text-slate-700">
               <span>{labels.selectedReceiptsCount}</span>
               <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-emerald-700">
                 {selectedSettlementReceipts.length}
               </span>
             </div>
-
             <div className="flex items-center justify-between rounded-lg bg-white px-2 py-2 text-xs font-semibold text-slate-700">
               <span>
                 {settlementPerspective === "seller"
@@ -850,14 +794,23 @@ export default function Home() {
                 {selectedSettlementCounterpartyCount}
               </span>
             </div>
-
             <div className="flex items-center justify-between rounded-lg bg-white px-2 py-2 text-xs font-semibold text-slate-700">
               <span>{labels.finalCollection}</span>
               <span className="text-emerald-700">
                 {formatCurrency(selectedSettlementCollection)}
               </span>
             </div>
-
+            <label className="flex items-center justify-between gap-2 rounded-lg bg-white px-2 py-2 text-xs font-semibold text-slate-700">
+              {labels.settlementShowWeights}
+              <input
+                type="checkbox"
+                checked={showSettlementWeights}
+                onChange={(event) =>
+                  setShowSettlementWeights(event.target.checked)
+                }
+                className="h-4 w-4"
+              />
+            </label>
             <Button
               variant="secondary"
               className="h-10 text-xs"
@@ -869,7 +822,6 @@ export default function Home() {
             >
               {labels.selectAll}
             </Button>
-
             <Button
               variant="secondary"
               className="h-10 text-xs"
@@ -881,7 +833,6 @@ export default function Home() {
             >
               {labels.selectLatest3}
             </Button>
-
             <Button
               variant="secondary"
               className="h-10 text-xs"
@@ -893,7 +844,6 @@ export default function Home() {
             >
               {labels.selectLatest5}
             </Button>
-
             <Button
               variant="secondary"
               className="h-10 text-xs"
@@ -902,7 +852,6 @@ export default function Home() {
             >
               {labels.unselectAll}
             </Button>
-
             <Button
               className="h-10 text-xs lg:col-span-2"
               onClick={generateSettlementReceipt}
@@ -918,16 +867,7 @@ export default function Home() {
             {filteredHistory.map((item) => (
               <div
                 key={item.id}
-                className={`rounded-xl border p-2 ${
-                  selectedSettlementParty.trim() &&
-                  (settlementPerspective === "seller"
-                    ? item.receipt.sellerName.trim() !==
-                      selectedSettlementSeller.trim()
-                    : item.receipt.buyerName.trim() !==
-                      selectedSettlementBuyer.trim())
-                    ? "border-slate-200/80 bg-slate-50/60 opacity-70"
-                    : "border-slate-200 bg-white"
-                }`}
+                className={`rounded-xl border p-2 ${selectedSettlementParty.trim() && (settlementPerspective === "seller" ? item.receipt.sellerName.trim() !== selectedSettlementSeller.trim() : item.receipt.buyerName.trim() !== selectedSettlementBuyer.trim()) ? "border-slate-200/80 bg-slate-50/60 opacity-70" : "border-slate-200 bg-white"}`}
               >
                 <div className="mb-1 flex items-center justify-between gap-2">
                   <p className="truncate text-[10px] font-semibold text-slate-500">
@@ -955,7 +895,7 @@ export default function Home() {
                 <button
                   type="button"
                   onClick={() => loadFromHistory(item)}
-                  className="w-full text-left"
+                  className="w-full text-left rounded-lg p-1 transition hover:bg-slate-50"
                 >
                   <p className="truncate text-xs font-bold text-slate-800">
                     {item.receipt.grainName}
@@ -977,32 +917,39 @@ export default function Home() {
                     })}
                   </p>
                   <p className="mt-1 text-[10px] font-semibold text-emerald-700">
-                    {labels.loadReceipt}
+                    Tap to load in form
                   </p>
                 </button>
               </div>
             ))}
           </div>
-          {filteredHistory.length === 0 ? (
-            <p className="mt-2 text-xs text-slate-500">
-              No matching history items.
-            </p>
-          ) : null}
         </section>
       ) : null}
 
       <div className="grid gap-3 md:gap-4 xl:grid-cols-[1.2fr_1fr] xl:items-start">
         <section className="no-print rounded-3xl border border-slate-200/80 bg-white/95 p-3 shadow-lg shadow-slate-200/60 ring-1 ring-slate-100 sm:p-5">
-          <Form labels={labels} onGenerate={handleGenerateReceipt} />
+          <Form
+            language={language}
+            labels={labels}
+            onGenerate={handleGenerateReceipt}
+            incomingDraft={incomingDraft}
+            incomingDraftToken={incomingDraftToken}
+            onRestoreLastReceipt={restoreLastReceipt}
+            hasLastReceipt={Boolean(lastSavedReceipt)}
+          />
         </section>
-
         <section ref={receiptSectionRef} className="space-y-3">
           {(activeOutput === "receipt" && receipt) ||
           (activeOutput === "settlement" && settlement) ? (
             <>
               <div className="no-print grid grid-cols-2 gap-2 xl:sticky xl:top-3 xl:z-10">
                 <Button onClick={handlePrint} className="sm:flex-1">
-                  {actionLabel("printPdf", labels.printAsPdf)}
+                  {actionLabel(
+                    "printPdf",
+                    activeOutput === "settlement"
+                      ? labels.settlementPdf
+                      : labels.printAsPdf,
+                  )}
                 </Button>
                 <Button
                   variant="secondary"
@@ -1056,12 +1003,15 @@ export default function Home() {
                     labels={labels}
                     settlement={settlement}
                     compactPrintMode={compactPrintMode}
+                    exportMode={isExportMode}
+                    showWeights={showSettlementWeights}
                   />
                 ) : receipt ? (
                   <Receipt
                     labels={labels}
                     receipt={receipt}
                     compactPrintMode={compactPrintMode}
+                    exportMode={isExportMode}
                   />
                 ) : null}
               </div>
@@ -1083,18 +1033,38 @@ export default function Home() {
           aria-atomic="true"
         >
           <div
-            className={`hs-toast pointer-events-auto w-full rounded-xl px-4 py-3 text-sm font-semibold shadow-xl ring-1 ${
-              toast.tone === "success"
-                ? "bg-emerald-600 text-white ring-emerald-500/40"
-                : toast.tone === "error"
-                  ? "bg-red-600 text-white ring-red-500/40"
-                  : "bg-slate-800 text-white ring-slate-700/40"
-            }`}
+            className={`hs-toast pointer-events-auto w-full rounded-xl px-4 py-3 text-sm font-semibold shadow-xl ring-1 ${toast.tone === "success" ? "bg-emerald-600 text-white ring-emerald-500/40" : toast.tone === "error" ? "bg-red-600 text-white ring-red-500/40" : "bg-slate-800 text-white ring-slate-700/40"}`}
           >
             {toast.message}
           </div>
         </div>
       ) : null}
+      <div className="no-print fixed inset-x-0 bottom-0 z-40 border-t border-slate-200 bg-white/95 px-3 py-2 shadow-[0_-8px_24px_rgba(15,23,42,0.08)] sm:hidden">
+        <div className="grid grid-cols-3 gap-2">
+          <Button type="submit" form="receipt-form" className="h-11 text-xs">
+            {labels.stickyGenerate}
+          </Button>
+          <Button
+            variant="secondary"
+            onClick={generateSettlementReceipt}
+            className="h-11 text-xs"
+            disabled={
+              !selectedSettlementParty.trim() ||
+              selectedSettlementReceipts.length === 0
+            }
+          >
+            {labels.stickySettlement}
+          </Button>
+          <Button
+            variant="secondary"
+            onClick={handlePrint}
+            className="h-11 text-xs"
+            disabled={!activeOutput}
+          >
+            {labels.stickyPrint}
+          </Button>
+        </div>
+      </div>
     </main>
   );
 }
