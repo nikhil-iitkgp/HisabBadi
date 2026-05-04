@@ -36,10 +36,26 @@ body {
   animation: hs-toast-in 180ms ease-out;
 }
 
+.brand-logo-img {
+  transform-origin: center;
+  clip-path: inset(16% 8% 16% 8%);
+}
+
+.brand-logo-img-sm {
+  transform: scale(3.45);
+}
+
+.brand-logo-img-md {
+  transform: scale(3.5);
+}
+
+.brand-logo-img-lg {
+  transform: scale(3.55);
+}
+
 .weight-grid-scroll {
   max-width: 100%;
   overflow-x: auto;
-  overscroll-behavior-x: contain;
 }
 
 @keyframes hs-toast-in {

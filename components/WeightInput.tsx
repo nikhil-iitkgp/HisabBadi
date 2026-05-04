@@ -39,6 +39,16 @@ const GRID_SCROLL_COLUMN_THRESHOLD = 10;
 const GRID_SCROLL_ROW_THRESHOLD = 20;
 const DEFAULT_TABLE_COLUMNS = 5;
 const STRETCH_COLUMN_THRESHOLD = 8;
+const GRID_COLUMNS_CLASS: Record<number, string> = {
+  1: "grid-cols-1",
+  2: "grid-cols-2",
+  3: "grid-cols-3",
+  4: "grid-cols-4",
+  5: "grid-cols-5",
+  6: "grid-cols-6",
+  7: "grid-cols-7",
+  8: "grid-cols-8",
+};
 
 export const sanitizeWeightValue = (value: string): string =>
   value.replace(/[^0-9.]/g, "").replace(/(\..*)\./g, "$1");
@@ -132,6 +142,7 @@ export default function WeightInput({
     [safeColumns, safeRows, values],
   );
   const shouldStretchColumns = safeColumns <= STRETCH_COLUMN_THRESHOLD;
+  const stretchGridClass = GRID_COLUMNS_CLASS[safeColumns] ?? "grid-cols-1";
   const [rowsInputValue, setRowsInputValue] = useState(String(safeRows));
   const [columnsInputValue, setColumnsInputValue] = useState(
     String(safeColumns),
@@ -206,6 +217,9 @@ export default function WeightInput({
     onChange(nextGridValues);
   };
 
+  const resizeGridValues = (nextRows: number, nextColumns: number) =>
+    buildGridValues(values, nextRows, nextColumns);
+
   const compactTableGrid = (sourceValues: string[] = gridValues) => {
     const compactValues = getCompactEntryValues(
       sourceValues,
@@ -257,14 +271,20 @@ export default function WeightInput({
 
   const applyRowsChange = (nextRowsValue: string) => {
     const parsedRows = Number.parseInt(nextRowsValue, 10);
-    const nextRows = clampGridSize(
+    const desiredRows = clampGridSize(
       Number.isFinite(parsedRows) ? parsedRows : 1,
     );
-    const compactValues = getCompactEntryValues(values, safeRows, safeColumns);
-    const nextColumns = Math.max(
-      1,
-      compactValues.length > 0 ? Math.ceil(compactValues.length / nextRows) : 1,
+    const parsedColumns = Number.parseInt(columnsInputValue, 10);
+    const desiredColumns = clampGridSize(
+      Number.isFinite(parsedColumns) ? parsedColumns : safeColumns,
     );
+    const compactValues = getCompactEntryValues(values, safeRows, safeColumns);
+    const nonEmptyCount = compactValues.length;
+    const hasRoom = desiredRows * desiredColumns >= nonEmptyCount;
+    const nextColumns = hasRoom
+      ? desiredColumns
+      : Math.max(desiredColumns, Math.ceil(nonEmptyCount / desiredRows));
+    const nextRows = desiredRows;
     onRowsChange(nextRows);
     onColumnsChange(nextColumns);
     onChange(entryOrderToGridValues(compactValues, nextRows, nextColumns));
@@ -272,16 +292,20 @@ export default function WeightInput({
 
   const applyColumnsChange = (nextColumnsValue: string) => {
     const parsedColumns = Number.parseInt(nextColumnsValue, 10);
-    const nextColumns = clampGridSize(
+    const desiredColumns = clampGridSize(
       Number.isFinite(parsedColumns) ? parsedColumns : 1,
     );
-    const compactValues = getCompactEntryValues(values, safeRows, safeColumns);
-    const nextRows = Math.max(
-      1,
-      compactValues.length > 0
-        ? Math.ceil(compactValues.length / nextColumns)
-        : 1,
+    const parsedRows = Number.parseInt(rowsInputValue, 10);
+    const desiredRows = clampGridSize(
+      Number.isFinite(parsedRows) ? parsedRows : safeRows,
     );
+    const compactValues = getCompactEntryValues(values, safeRows, safeColumns);
+    const nonEmptyCount = compactValues.length;
+    const hasRoom = desiredRows * desiredColumns >= nonEmptyCount;
+    const nextRows = hasRoom
+      ? desiredRows
+      : Math.max(desiredRows, Math.ceil(nonEmptyCount / desiredColumns));
+    const nextColumns = desiredColumns;
     onRowsChange(nextRows);
     onColumnsChange(nextColumns);
     onChange(entryOrderToGridValues(compactValues, nextRows, nextColumns));
@@ -546,13 +570,10 @@ export default function WeightInput({
             {Array.from({ length: safeRows }, (_, row) => (
               <div
                 key={`weight-row-${row}`}
-                className={shouldStretchColumns ? "grid gap-2" : "flex gap-2"}
-                style={
+                className={
                   shouldStretchColumns
-                    ? {
-                        gridTemplateColumns: `repeat(${safeColumns}, minmax(64px, 1fr))`,
-                      }
-                    : undefined
+                    ? `grid gap-2 ${stretchGridClass}`
+                    : "flex gap-2"
                 }
               >
                 {Array.from({ length: safeColumns }, (_, column) => {

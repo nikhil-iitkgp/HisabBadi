@@ -20,6 +20,16 @@ const rowClass =
 const GRID_SCROLL_COLUMN_THRESHOLD = 10;
 const GRID_SCROLL_ROW_THRESHOLD = 20;
 const WRAP_COLUMNS_PER_BLOCK = 8;
+const GRID_COLUMNS_CLASS: Record<number, string> = {
+  1: "grid-cols-1",
+  2: "grid-cols-2",
+  3: "grid-cols-3",
+  4: "grid-cols-4",
+  5: "grid-cols-5",
+  6: "grid-cols-6",
+  7: "grid-cols-7",
+  8: "grid-cols-8",
+};
 
 export default function SettlementReceipt({
   labels,
@@ -250,6 +260,10 @@ export default function SettlementReceipt({
                                         grid.columns,
                                         start + WRAP_COLUMNS_PER_BLOCK,
                                       );
+                                      const blockColumns = end - start;
+                                      const blockGridClass =
+                                        GRID_COLUMNS_CLASS[blockColumns] ??
+                                        "grid-cols-1";
 
                                       return (
                                         <div
@@ -257,17 +271,14 @@ export default function SettlementReceipt({
                                           className={`space-y-1.5 ${start > 0 ? "border-t border-dashed border-slate-200 pt-2" : ""}`}
                                         >
                                           <div
-                                            className="grid gap-1.5 text-[10px] font-semibold text-slate-400"
-                                            style={{
-                                              gridTemplateColumns: `repeat(${end - start}, minmax(64px, 1fr))`,
-                                            }}
+                                            className={`grid gap-1.5 text-[10px] font-semibold text-slate-400 ${blockGridClass}`}
                                           >
                                             {Array.from(
                                               { length: end - start },
                                               (_, offset) => (
                                                 <span
                                                   key={`settlement-col-label-${receiptIndex}-${start + offset}`}
-                                                  className="min-w-[64px] flex-1 text-center"
+                                                  className="min-w-16 flex-1 text-center"
                                                 >
                                                   Col {start + offset + 1}
                                                 </span>
@@ -279,10 +290,7 @@ export default function SettlementReceipt({
                                             (_, row) => (
                                               <div
                                                 key={`settlement-weight-row-${receiptIndex}-${start}-${row}`}
-                                                className="grid gap-1.5"
-                                                style={{
-                                                  gridTemplateColumns: `repeat(${end - start}, minmax(64px, 1fr))`,
-                                                }}
+                                                className={`grid gap-1.5 ${blockGridClass}`}
                                               >
                                                 {Array.from(
                                                   { length: end - start },
@@ -328,16 +336,8 @@ export default function SettlementReceipt({
                                           className={
                                             grid.columns <=
                                             WRAP_COLUMNS_PER_BLOCK
-                                              ? "grid gap-1.5"
+                                              ? `grid gap-1.5 ${GRID_COLUMNS_CLASS[grid.columns] ?? "grid-cols-1"}`
                                               : "flex gap-1.5"
-                                          }
-                                          style={
-                                            grid.columns <=
-                                            WRAP_COLUMNS_PER_BLOCK
-                                              ? {
-                                                  gridTemplateColumns: `repeat(${grid.columns}, minmax(64px, 1fr))`,
-                                                }
-                                              : undefined
                                           }
                                         >
                                           {Array.from(

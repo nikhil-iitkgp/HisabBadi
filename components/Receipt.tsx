@@ -17,6 +17,16 @@ interface ReceiptProps {
 const GRID_SCROLL_COLUMN_THRESHOLD = 10;
 const GRID_SCROLL_ROW_THRESHOLD = 20;
 const WRAP_COLUMNS_PER_BLOCK = 8;
+const GRID_COLUMNS_CLASS: Record<number, string> = {
+  1: "grid-cols-1",
+  2: "grid-cols-2",
+  3: "grid-cols-3",
+  4: "grid-cols-4",
+  5: "grid-cols-5",
+  6: "grid-cols-6",
+  7: "grid-cols-7",
+  8: "grid-cols-8",
+};
 
 const rowClass =
   "grid grid-cols-[1fr_auto] items-start gap-4 py-1.5 text-sm text-slate-700 sm:text-[15px]";
@@ -31,6 +41,8 @@ export default function Receipt({
   const showTableWeights = receipt.weightInputMode === "table";
   const shouldWrapWeights = exportMode;
   const shouldStretchColumns = weightGrid.columns <= WRAP_COLUMNS_PER_BLOCK;
+  const stretchGridClass =
+    GRID_COLUMNS_CLASS[weightGrid.columns] ?? "grid-cols-1";
   const weightColumnBlocks = Array.from(
     {
       length: Math.max(
@@ -160,14 +172,7 @@ export default function Receipt({
                   className={`space-y-1.5 ${block.index > 0 ? "border-t border-dashed border-slate-200 pt-2" : ""}`}
                 >
                   <div
-                    className={`text-[10px] font-semibold text-slate-400 ${shouldStretchColumns ? "grid gap-1.5" : "flex gap-1.5"}`}
-                    style={
-                      shouldStretchColumns
-                        ? {
-                            gridTemplateColumns: `repeat(${block.end - block.start}, minmax(64px, 1fr))`,
-                          }
-                        : undefined
-                    }
+                    className={`text-[10px] font-semibold text-slate-400 ${shouldStretchColumns ? `grid gap-1.5 ${stretchGridClass}` : "flex gap-1.5"}`}
                   >
                     {Array.from(
                       { length: block.end - block.start },
@@ -189,14 +194,9 @@ export default function Receipt({
                     <div
                       key={`receipt-row-${block.start}-${row}`}
                       className={
-                        shouldStretchColumns ? "grid gap-1.5" : "flex gap-1.5"
-                      }
-                      style={
                         shouldStretchColumns
-                          ? {
-                              gridTemplateColumns: `repeat(${block.end - block.start}, minmax(64px, 1fr))`,
-                            }
-                          : undefined
+                          ? `grid gap-1.5 ${stretchGridClass}`
+                          : "flex gap-1.5"
                       }
                     >
                       {Array.from(
@@ -236,14 +236,9 @@ export default function Receipt({
                   <div
                     key={`receipt-row-${row}`}
                     className={
-                      shouldStretchColumns ? "grid gap-1.5" : "flex gap-1.5"
-                    }
-                    style={
                       shouldStretchColumns
-                        ? {
-                            gridTemplateColumns: `repeat(${weightGrid.columns}, minmax(64px, 1fr))`,
-                          }
-                        : undefined
+                        ? `grid gap-1.5 ${stretchGridClass}`
+                        : "flex gap-1.5"
                     }
                   >
                     {Array.from({ length: weightGrid.columns }, (_, column) => {

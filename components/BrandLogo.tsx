@@ -47,12 +47,7 @@ export default function BrandLogo({
         <img
           src="/hisabbadilogo.png"
           alt="HisabBadi"
-          className="h-full w-full object-contain object-center"
-          style={{
-            transform: `scale(${selected.scale})`,
-            transformOrigin: "center",
-            clipPath: "inset(16% 8% 16% 8%)",
-          }}
+          className={`brand-logo-img brand-logo-img-${size} h-full w-full object-contain object-center`}
           sizes={selected.sizes}
           decoding="async"
           loading={size === "lg" ? "eager" : "lazy"}
