@@ -1,5 +1,3 @@
-import Image from "next/image";
-
 interface BrandLogoProps {
   size?: "sm" | "md" | "lg";
   showText?: boolean;
@@ -46,18 +44,19 @@ export default function BrandLogo({
         className={`relative overflow-hidden ${selected.frame}`}
         aria-hidden
       >
-        <Image
+        <img
           src="/hisabbadilogo.png"
           alt="HisabBadi"
-          fill
-          sizes={selected.sizes}
-          className="object-contain object-center"
+          className="h-full w-full object-contain object-center"
           style={{
             transform: `scale(${selected.scale})`,
             transformOrigin: "center",
             clipPath: "inset(16% 8% 16% 8%)",
           }}
-          priority={size === "lg"}
+          sizes={selected.sizes}
+          decoding="async"
+          loading={size === "lg" ? "eager" : "lazy"}
+          crossOrigin="anonymous"
         />
       </span>
       {showText ? (

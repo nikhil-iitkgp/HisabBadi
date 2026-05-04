@@ -447,6 +447,17 @@ export default function Home() {
     if (!receiptCardRef.current) throw new Error("Receipt unavailable");
     if (typeof document !== "undefined" && "fonts" in document)
       await document.fonts.ready;
+    const images = Array.from(receiptCardRef.current.querySelectorAll("img"));
+    await Promise.all(
+      images.map((img) =>
+        img.complete
+          ? Promise.resolve()
+          : new Promise<void>((resolve) => {
+              img.addEventListener("load", () => resolve(), { once: true });
+              img.addEventListener("error", () => resolve(), { once: true });
+            }),
+      ),
+    );
     setIsExportMode(true);
     try {
       await new Promise((resolve) => window.setTimeout(resolve, 100));
