@@ -36,6 +36,12 @@ body {
   animation: hs-toast-in 180ms ease-out;
 }
 
+.weight-grid-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+
 @keyframes hs-toast-in {
   from {
     opacity: 0;

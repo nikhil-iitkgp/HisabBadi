@@ -13,7 +13,10 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+const metadataBase = new URL("https://hisabbadi.onrender.com");
+
 export const metadata: Metadata = {
+  metadataBase,
   title: "HisabBadi",
   description: "Modern receipt generator for mandi and grain traders",
   icons: {
@@ -22,6 +25,24 @@ export const metadata: Metadata = {
       { url: "/icon-512.svg", type: "image/svg+xml", sizes: "512x512" },
     ],
     apple: [{ url: "/icon-192.svg", type: "image/svg+xml", sizes: "192x192" }],
+  },
+  openGraph: {
+    type: "website",
+    url: "/",
+    title: "HisabBadi",
+    description: "Modern receipt generator for mandi and grain traders",
+    images: [
+      {
+        url: "/high-resolution-color-logo.png",
+        alt: "HisabBadi",
+      },
+    ],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "HisabBadi",
+    description: "Modern receipt generator for mandi and grain traders",
+    images: ["/high-resolution-color-logo.png"],
   },
 };
 

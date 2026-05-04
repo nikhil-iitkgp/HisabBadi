@@ -38,6 +38,7 @@ const MIN_GRID_SIZE = 1;
 const GRID_SCROLL_COLUMN_THRESHOLD = 10;
 const GRID_SCROLL_ROW_THRESHOLD = 20;
 const DEFAULT_TABLE_COLUMNS = 5;
+const STRETCH_COLUMN_THRESHOLD = 8;
 
 export const sanitizeWeightValue = (value: string): string =>
   value.replace(/[^0-9.]/g, "").replace(/(\..*)\./g, "$1");
@@ -130,6 +131,7 @@ export default function WeightInput({
     () => buildGridValues(values, safeRows, safeColumns),
     [safeColumns, safeRows, values],
   );
+  const shouldStretchColumns = safeColumns <= STRETCH_COLUMN_THRESHOLD;
   const [rowsInputValue, setRowsInputValue] = useState(String(safeRows));
   const [columnsInputValue, setColumnsInputValue] = useState(
     String(safeColumns),
@@ -536,18 +538,34 @@ export default function WeightInput({
 
       {mode === "table" ? (
         <div
-          className={`rounded-2xl ${safeRows > GRID_SCROLL_ROW_THRESHOLD ? "max-h-screen overflow-y-auto pr-1" : ""}`}
+          className={`weight-grid-scroll w-full min-w-0 rounded-2xl ${safeRows > GRID_SCROLL_ROW_THRESHOLD ? "max-h-screen overflow-y-auto pr-1" : ""} ${shouldStretchColumns ? "overflow-x-hidden" : "overflow-x-auto"}`}
         >
-          <div className="space-y-2">
+          <div
+            className={`space-y-2 ${shouldStretchColumns ? "w-full" : "w-max"}`}
+          >
             {Array.from({ length: safeRows }, (_, row) => (
-              <div key={`weight-row-${row}`} className="flex gap-2">
+              <div
+                key={`weight-row-${row}`}
+                className={shouldStretchColumns ? "grid gap-2" : "flex gap-2"}
+                style={
+                  shouldStretchColumns
+                    ? {
+                        gridTemplateColumns: `repeat(${safeColumns}, minmax(64px, 1fr))`,
+                      }
+                    : undefined
+                }
+              >
                 {Array.from({ length: safeColumns }, (_, column) => {
                   const index = toCellIndex(row, column, safeColumns);
 
                   return (
                     <div
                       key={`weight-cell-${row}-${column}`}
-                      className="relative min-w-0 flex-1"
+                      className={
+                        shouldStretchColumns
+                          ? "relative w-full"
+                          : "relative w-20 shrink-0"
+                      }
                     >
                       <input
                         ref={(node) => {

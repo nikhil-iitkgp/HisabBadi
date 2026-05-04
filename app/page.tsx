@@ -369,7 +369,6 @@ export default function Home() {
   const handlePrint = () => {
     if (typeof window === "undefined" || typeof document === "undefined")
       return;
-    const previousTitle = document.title;
     const nextTitle =
       activeOutput === "settlement" && settlement
         ? buildSettlementFileStem(settlement)
@@ -381,10 +380,6 @@ export default function Home() {
     document.title = nextTitle;
     window.setTimeout(() => {
       window.print();
-      window.setTimeout(() => {
-        setIsExportMode(false);
-        document.title = previousTitle;
-      }, 300);
     }, 80);
     showToast("Print dialog opened", "info");
   };
@@ -460,7 +455,7 @@ export default function Home() {
     );
     setIsExportMode(true);
     try {
-      await new Promise((resolve) => window.setTimeout(resolve, 100));
+      await new Promise((resolve) => window.setTimeout(resolve, 150));
       const dataUrl = await toPng(receiptCardRef.current, {
         cacheBust: true,
         pixelRatio: 2,
@@ -495,9 +490,14 @@ export default function Home() {
       anchor.click();
       markAction("downloadPng", "success");
       showToast("Image downloaded", "success");
-    } catch {
+    } catch (error) {
       markAction("downloadPng", "idle");
-      showToast("PNG download failed", "error");
+      console.error("PNG download failed", error);
+      const message =
+        error instanceof Error && error.message
+          ? `PNG download failed: ${error.message}`
+          : "PNG download failed";
+      showToast(message, "error");
     } finally {
       setIsProcessingPng(false);
     }
@@ -558,9 +558,14 @@ export default function Home() {
       );
       markAction("whatsappPng", "success");
       showToast("WhatsApp PNG prepared", "success");
-    } catch {
+    } catch (error) {
       markAction("whatsappPng", "idle");
-      showToast("Unable to prepare WhatsApp PNG", "error");
+      console.error("WhatsApp PNG failed", error);
+      const message =
+        error instanceof Error && error.message
+          ? `Unable to prepare WhatsApp PNG: ${error.message}`
+          : "Unable to prepare WhatsApp PNG";
+      showToast(message, "error");
     } finally {
       setIsProcessingPng(false);
     }
@@ -938,7 +943,7 @@ export default function Home() {
       ) : null}
 
       <div className="grid gap-3 md:gap-4 xl:grid-cols-[1.2fr_1fr] xl:items-start">
-        <section className="no-print rounded-3xl border border-slate-200/80 bg-white/95 p-3 shadow-lg shadow-slate-200/60 ring-1 ring-slate-100 sm:p-5">
+        <section className="no-print min-w-0 overflow-hidden rounded-3xl border border-slate-200/80 bg-white/95 p-3 shadow-lg shadow-slate-200/60 ring-1 ring-slate-100 sm:p-5">
           <Form
             language={language}
             labels={labels}
@@ -949,7 +954,7 @@ export default function Home() {
             hasLastReceipt={Boolean(lastSavedReceipt)}
           />
         </section>
-        <section ref={receiptSectionRef} className="space-y-3">
+        <section ref={receiptSectionRef} className="space-y-3 min-w-0">
           {(activeOutput === "receipt" && receipt) ||
           (activeOutput === "settlement" && settlement) ? (
             <>

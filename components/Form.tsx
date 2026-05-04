@@ -300,44 +300,73 @@ export default function Form({
   hasLastReceipt = false,
 }: FormProps) {
   const draft = readDraft();
-  const [date, setDate] = useState(draft?.date ?? getTodayDate());
-  const [buyerName, setBuyerName] = useState(draft?.buyerName ?? "");
-  const [sellerName, setSellerName] = useState(draft?.sellerName ?? "");
-  const [grainName, setGrainName] = useState(draft?.grainName ?? "");
-  const [ratePerKg, setRatePerKg] = useState(draft?.ratePerKg ?? "");
+  const hasDraftValues = draft
+    ? hasAnyDraftContent({
+        buyerName: draft.buyerName ?? "",
+        sellerName: draft.sellerName ?? "",
+        grainName: draft.grainName ?? "",
+        ratePerKg: draft.ratePerKg ?? "",
+        reductionPerBori: draft.reductionPerBori ?? "",
+        palledariPerBori: draft.palledariPerBori ?? "",
+        commissionAmount: draft.commissionAmount ?? "",
+        truckNumber: draft.truckNumber ?? "",
+        qualityNote: draft.qualityNote ?? "",
+        moistureNote: draft.moistureNote ?? "",
+        brokerName: draft.brokerName ?? "",
+        weightValues: draft.weightValues ?? [],
+      })
+    : false;
+  const effectiveDraft = hasDraftValues ? draft : null;
+  const [date, setDate] = useState(effectiveDraft?.date ?? getTodayDate());
+  const [buyerName, setBuyerName] = useState(effectiveDraft?.buyerName ?? "");
+  const [sellerName, setSellerName] = useState(
+    effectiveDraft?.sellerName ?? "",
+  );
+  const [grainName, setGrainName] = useState(effectiveDraft?.grainName ?? "");
+  const [ratePerKg, setRatePerKg] = useState(effectiveDraft?.ratePerKg ?? "");
   const [reductionPerBori, setReductionPerBori] = useState(
-    draft?.reductionPerBori ?? "",
+    effectiveDraft?.reductionPerBori ?? "",
   );
   const [palledariPerBori, setPalledariPerBori] = useState(
-    draft?.palledariPerBori ?? "",
+    effectiveDraft?.palledariPerBori ?? "",
   );
   const [weightValues, setWeightValues] = useState<string[]>(
-    draft?.weightValues && draft.weightValues.length > 0
-      ? draft.weightValues
+    effectiveDraft?.weightValues && effectiveDraft.weightValues.length > 0
+      ? effectiveDraft.weightValues
       : [],
   );
   const [weightRows, setWeightRows] = useState(
-    draft?.weightRows && draft.weightRows > 0
-      ? draft.weightRows
+    effectiveDraft?.weightRows && effectiveDraft.weightRows > 0
+      ? effectiveDraft.weightRows
       : DEFAULT_WEIGHT_ROWS,
   );
   const [weightColumns, setWeightColumns] = useState(
-    draft?.weightColumns && draft.weightColumns > 0
-      ? draft.weightColumns
+    effectiveDraft?.weightColumns && effectiveDraft.weightColumns > 0
+      ? effectiveDraft.weightColumns
       : DEFAULT_WEIGHT_COLUMNS,
   );
   const [weightInputMode, setWeightInputMode] = useState<WeightInputMode>(
-    draft?.weightInputMode ?? "single",
+    effectiveDraft?.weightInputMode ?? "single",
   );
-  const [tagsInput, setTagsInput] = useState((draft?.tags ?? []).join(", "));
-  const [truckNumber, setTruckNumber] = useState(draft?.truckNumber ?? "");
-  const [qualityNote, setQualityNote] = useState(draft?.qualityNote ?? "");
-  const [moistureNote, setMoistureNote] = useState(draft?.moistureNote ?? "");
-  const [brokerName, setBrokerName] = useState(draft?.brokerName ?? "");
+  const [tagsInput, setTagsInput] = useState(
+    (effectiveDraft?.tags ?? []).join(", "),
+  );
+  const [truckNumber, setTruckNumber] = useState(
+    effectiveDraft?.truckNumber ?? "",
+  );
+  const [qualityNote, setQualityNote] = useState(
+    effectiveDraft?.qualityNote ?? "",
+  );
+  const [moistureNote, setMoistureNote] = useState(
+    effectiveDraft?.moistureNote ?? "",
+  );
+  const [brokerName, setBrokerName] = useState(
+    effectiveDraft?.brokerName ?? "",
+  );
   const [commissionAmount, setCommissionAmount] = useState(
-    draft?.commissionAmount ?? "",
+    effectiveDraft?.commissionAmount ?? "",
   );
-  const [locked, setLocked] = useState(Boolean(draft?.locked));
+  const [locked, setLocked] = useState(Boolean(effectiveDraft?.locked));
   const [errors, setErrors] = useState<FieldErrorMap>({});
   const [recentBuyers, setRecentBuyers] = useState<string[]>(() =>
     readRecentListWithReset(RECENT_BUYERS_KEY),

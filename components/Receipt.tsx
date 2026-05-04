@@ -16,6 +16,7 @@ interface ReceiptProps {
 
 const GRID_SCROLL_COLUMN_THRESHOLD = 10;
 const GRID_SCROLL_ROW_THRESHOLD = 20;
+const WRAP_COLUMNS_PER_BLOCK = 8;
 
 const rowClass =
   "grid grid-cols-[1fr_auto] items-start gap-4 py-1.5 text-sm text-slate-700 sm:text-[15px]";
@@ -28,6 +29,21 @@ export default function Receipt({
 }: ReceiptProps) {
   const weightGrid = getReceiptWeightGrid(receipt);
   const showTableWeights = receipt.weightInputMode === "table";
+  const shouldWrapWeights = exportMode;
+  const shouldStretchColumns = weightGrid.columns <= WRAP_COLUMNS_PER_BLOCK;
+  const weightColumnBlocks = Array.from(
+    {
+      length: Math.max(
+        1,
+        Math.ceil(weightGrid.columns / WRAP_COLUMNS_PER_BLOCK),
+      ),
+    },
+    (_, blockIndex) => {
+      const start = blockIndex * WRAP_COLUMNS_PER_BLOCK;
+      const end = Math.min(weightGrid.columns, start + WRAP_COLUMNS_PER_BLOCK);
+      return { start, end, index: blockIndex };
+    },
+  );
 
   return (
     <article
@@ -136,29 +152,120 @@ export default function Receipt({
           </span>
         </div>
         {showTableWeights ? (
-          <div
-            className={`receipt-weight-grid-shell rounded-2xl ${!exportMode && weightGrid.rows > GRID_SCROLL_ROW_THRESHOLD ? "max-h-screen overflow-y-auto pr-1" : ""}`}
-          >
-            <div className="space-y-1.5">
-              {Array.from({ length: weightGrid.rows }, (_, row) => (
-                <div key={`receipt-row-${row}`} className="flex gap-1.5">
-                  {Array.from({ length: weightGrid.columns }, (_, column) => {
-                    const index = row * weightGrid.columns + column;
-                    const value = weightGrid.values[index] ?? "";
+          shouldWrapWeights ? (
+            <div className="space-y-3">
+              {weightColumnBlocks.map((block) => (
+                <div
+                  key={`receipt-block-${block.start}`}
+                  className={`space-y-1.5 ${block.index > 0 ? "border-t border-dashed border-slate-200 pt-2" : ""}`}
+                >
+                  <div
+                    className={`text-[10px] font-semibold text-slate-400 ${shouldStretchColumns ? "grid gap-1.5" : "flex gap-1.5"}`}
+                    style={
+                      shouldStretchColumns
+                        ? {
+                            gridTemplateColumns: `repeat(${block.end - block.start}, minmax(64px, 1fr))`,
+                          }
+                        : undefined
+                    }
+                  >
+                    {Array.from(
+                      { length: block.end - block.start },
+                      (_, offset) => (
+                        <span
+                          key={`receipt-col-label-${block.start + offset}`}
+                          className={
+                            shouldStretchColumns
+                              ? "min-w-[64px] flex-1 text-center"
+                              : "w-16 shrink-0 text-center"
+                          }
+                        >
+                          Col {block.start + offset + 1}
+                        </span>
+                      ),
+                    )}
+                  </div>
+                  {Array.from({ length: weightGrid.rows }, (_, row) => (
+                    <div
+                      key={`receipt-row-${block.start}-${row}`}
+                      className={
+                        shouldStretchColumns ? "grid gap-1.5" : "flex gap-1.5"
+                      }
+                      style={
+                        shouldStretchColumns
+                          ? {
+                              gridTemplateColumns: `repeat(${block.end - block.start}, minmax(64px, 1fr))`,
+                            }
+                          : undefined
+                      }
+                    >
+                      {Array.from(
+                        { length: block.end - block.start },
+                        (_, offset) => {
+                          const column = block.start + offset;
+                          const index = row * weightGrid.columns + column;
+                          const value = weightGrid.values[index] ?? "";
 
-                    return (
-                      <div
-                        key={`receipt-weight-${index}`}
-                        className={`min-h-9 min-w-0 flex-1 rounded-lg border border-slate-200 px-1.5 py-1.5 text-center font-semibold text-slate-700 ${weightGrid.columns > GRID_SCROLL_COLUMN_THRESHOLD ? "text-[10px] sm:text-[11px]" : "text-xs"} ${value.trim() ? "bg-slate-50" : "bg-slate-50/40 text-slate-300"}`}
-                      >
-                        {value || "-"}
-                      </div>
-                    );
-                  })}
+                          return (
+                            <div
+                              key={`receipt-weight-${index}`}
+                              className={`min-h-9 ${
+                                shouldStretchColumns
+                                  ? "w-full"
+                                  : "w-16 shrink-0"
+                              } rounded-lg border border-slate-200 px-1.5 py-1.5 text-center font-semibold text-slate-700 ${weightGrid.columns > GRID_SCROLL_COLUMN_THRESHOLD ? "text-[10px] sm:text-[11px]" : "text-xs"} ${value.trim() ? "bg-slate-50" : "bg-slate-50/40 text-slate-300"}`}
+                            >
+                              {value || "-"}
+                            </div>
+                          );
+                        },
+                      )}
+                    </div>
+                  ))}
                 </div>
               ))}
             </div>
-          </div>
+          ) : (
+            <div
+              className={`receipt-weight-grid-shell weight-grid-scroll w-full min-w-0 rounded-2xl ${weightGrid.rows > GRID_SCROLL_ROW_THRESHOLD ? "max-h-screen overflow-y-auto pr-1" : ""} ${shouldStretchColumns ? "overflow-x-hidden" : "overflow-x-auto"}`}
+            >
+              <div
+                className={`space-y-1.5 ${shouldStretchColumns ? "w-full" : "w-max"}`}
+              >
+                {Array.from({ length: weightGrid.rows }, (_, row) => (
+                  <div
+                    key={`receipt-row-${row}`}
+                    className={
+                      shouldStretchColumns ? "grid gap-1.5" : "flex gap-1.5"
+                    }
+                    style={
+                      shouldStretchColumns
+                        ? {
+                            gridTemplateColumns: `repeat(${weightGrid.columns}, minmax(64px, 1fr))`,
+                          }
+                        : undefined
+                    }
+                  >
+                    {Array.from({ length: weightGrid.columns }, (_, column) => {
+                      const index = row * weightGrid.columns + column;
+                      const value = weightGrid.values[index] ?? "";
+
+                      return (
+                        <div
+                          key={`receipt-weight-${index}`}
+                          className={`min-h-9 ${
+                            shouldStretchColumns ? "w-full" : "w-16 shrink-0"
+                          } rounded-lg border border-slate-200 px-1.5 py-1.5 text-center font-semibold text-slate-700 ${weightGrid.columns > GRID_SCROLL_COLUMN_THRESHOLD ? "text-[10px] sm:text-[11px]" : "text-xs"} ${value.trim() ? "bg-slate-50" : "bg-slate-50/40 text-slate-300"}`}
+                        >
+                          {value || "-"}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )
         ) : (
           <p
             className={`rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700 ${compactPrintMode ? "leading-4" : "leading-6"}`}

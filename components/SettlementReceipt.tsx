@@ -19,6 +19,7 @@ const rowClass =
   "grid grid-cols-[1fr_auto] items-start gap-4 py-1.5 text-sm text-slate-700 sm:text-[15px]";
 const GRID_SCROLL_COLUMN_THRESHOLD = 10;
 const GRID_SCROLL_ROW_THRESHOLD = 20;
+const WRAP_COLUMNS_PER_BLOCK = 8;
 
 export default function SettlementReceipt({
   labels,
@@ -33,6 +34,7 @@ export default function SettlementReceipt({
     settlement.perspective === "seller"
       ? labels.buyerWiseTotals
       : labels.sellerWiseTotals;
+  const shouldWrapWeights = exportMode;
 
   return (
     <article
@@ -230,40 +232,143 @@ export default function SettlementReceipt({
                               </span>
                             </div>
                             {showTableWeights ? (
-                              <div
-                                className={`receipt-weight-grid-shell rounded-xl ${!exportMode && grid.rows > GRID_SCROLL_ROW_THRESHOLD ? "max-h-screen overflow-y-auto pr-1" : ""}`}
-                              >
-                                <div className="space-y-1.5">
+                              shouldWrapWeights ? (
+                                <div className="space-y-3">
                                   {Array.from(
-                                    { length: grid.rows },
-                                    (_, row) => (
-                                      <div
-                                        key={`settlement-weight-row-${receiptIndex}-${row}`}
-                                        className="flex gap-1.5"
-                                      >
-                                        {Array.from(
-                                          { length: grid.columns },
-                                          (_, column) => {
-                                            const index =
-                                              row * grid.columns + column;
-                                            const value =
-                                              grid.values[index] ?? "";
+                                    {
+                                      length: Math.max(
+                                        1,
+                                        Math.ceil(
+                                          grid.columns / WRAP_COLUMNS_PER_BLOCK,
+                                        ),
+                                      ),
+                                    },
+                                    (_, blockIndex) => {
+                                      const start =
+                                        blockIndex * WRAP_COLUMNS_PER_BLOCK;
+                                      const end = Math.min(
+                                        grid.columns,
+                                        start + WRAP_COLUMNS_PER_BLOCK,
+                                      );
 
-                                            return (
+                                      return (
+                                        <div
+                                          key={`settlement-block-${receiptIndex}-${start}`}
+                                          className={`space-y-1.5 ${start > 0 ? "border-t border-dashed border-slate-200 pt-2" : ""}`}
+                                        >
+                                          <div
+                                            className="grid gap-1.5 text-[10px] font-semibold text-slate-400"
+                                            style={{
+                                              gridTemplateColumns: `repeat(${end - start}, minmax(64px, 1fr))`,
+                                            }}
+                                          >
+                                            {Array.from(
+                                              { length: end - start },
+                                              (_, offset) => (
+                                                <span
+                                                  key={`settlement-col-label-${receiptIndex}-${start + offset}`}
+                                                  className="min-w-[64px] flex-1 text-center"
+                                                >
+                                                  Col {start + offset + 1}
+                                                </span>
+                                              ),
+                                            )}
+                                          </div>
+                                          {Array.from(
+                                            { length: grid.rows },
+                                            (_, row) => (
                                               <div
-                                                key={`settlement-weight-${receiptIndex}-${index}`}
-                                                className={`min-h-8 min-w-0 flex-1 rounded-md border border-slate-200 px-1.5 py-1 text-center font-semibold ${grid.columns > GRID_SCROLL_COLUMN_THRESHOLD ? "text-[10px]" : "text-[11px]"} ${value.trim() ? "bg-white text-slate-700" : "bg-white/60 text-slate-300"}`}
+                                                key={`settlement-weight-row-${receiptIndex}-${start}-${row}`}
+                                                className="grid gap-1.5"
+                                                style={{
+                                                  gridTemplateColumns: `repeat(${end - start}, minmax(64px, 1fr))`,
+                                                }}
                                               >
-                                                {value || "-"}
+                                                {Array.from(
+                                                  { length: end - start },
+                                                  (_, offset) => {
+                                                    const column =
+                                                      start + offset;
+                                                    const index =
+                                                      row * grid.columns +
+                                                      column;
+                                                    const value =
+                                                      grid.values[index] ?? "";
+
+                                                    return (
+                                                      <div
+                                                        key={`settlement-weight-${receiptIndex}-${index}`}
+                                                        className={`min-h-8 w-full rounded-md border border-slate-200 px-1.5 py-1 text-center font-semibold ${grid.columns > GRID_SCROLL_COLUMN_THRESHOLD ? "text-[10px]" : "text-[11px]"} ${value.trim() ? "bg-white text-slate-700" : "bg-white/60 text-slate-300"}`}
+                                                      >
+                                                        {value || "-"}
+                                                      </div>
+                                                    );
+                                                  },
+                                                )}
                                               </div>
-                                            );
-                                          },
-                                        )}
-                                      </div>
-                                    ),
+                                            ),
+                                          )}
+                                        </div>
+                                      );
+                                    },
                                   )}
                                 </div>
-                              </div>
+                              ) : (
+                                <div
+                                  className={`receipt-weight-grid-shell weight-grid-scroll w-full min-w-0 rounded-xl ${grid.rows > GRID_SCROLL_ROW_THRESHOLD ? "max-h-screen overflow-y-auto pr-1" : ""} ${grid.columns <= WRAP_COLUMNS_PER_BLOCK ? "overflow-x-hidden" : "overflow-x-auto"}`}
+                                >
+                                  <div
+                                    className={`space-y-1.5 ${grid.columns <= WRAP_COLUMNS_PER_BLOCK ? "w-full" : "w-max"}`}
+                                  >
+                                    {Array.from(
+                                      { length: grid.rows },
+                                      (_, row) => (
+                                        <div
+                                          key={`settlement-weight-row-${receiptIndex}-${row}`}
+                                          className={
+                                            grid.columns <=
+                                            WRAP_COLUMNS_PER_BLOCK
+                                              ? "grid gap-1.5"
+                                              : "flex gap-1.5"
+                                          }
+                                          style={
+                                            grid.columns <=
+                                            WRAP_COLUMNS_PER_BLOCK
+                                              ? {
+                                                  gridTemplateColumns: `repeat(${grid.columns}, minmax(64px, 1fr))`,
+                                                }
+                                              : undefined
+                                          }
+                                        >
+                                          {Array.from(
+                                            { length: grid.columns },
+                                            (_, column) => {
+                                              const index =
+                                                row * grid.columns + column;
+                                              const value =
+                                                grid.values[index] ?? "";
+
+                                              return (
+                                                <div
+                                                  key={`settlement-weight-${receiptIndex}-${index}`}
+                                                  className={`min-h-8 ${
+                                                    grid.columns <=
+                                                    WRAP_COLUMNS_PER_BLOCK
+                                                      ? "w-full"
+                                                      : "w-16 shrink-0"
+                                                  } rounded-md border border-slate-200 px-1.5 py-1 text-center font-semibold ${grid.columns > GRID_SCROLL_COLUMN_THRESHOLD ? "text-[10px]" : "text-[11px]"} ${value.trim() ? "bg-white text-slate-700" : "bg-white/60 text-slate-300"}`}
+                                                >
+                                                  {value || "-"}
+                                                </div>
+                                              );
+                                            },
+                                          )}
+                                        </div>
+                                      ),
+                                    )}
+                                  </div>
+                                </div>
+                              )
                             ) : (
                               <p className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700">
                                 {grid.values

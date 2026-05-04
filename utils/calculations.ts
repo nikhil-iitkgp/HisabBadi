@@ -122,8 +122,8 @@ export const formatReceiptDate = (rawDate: string): string => {
   }
 
   return date.toLocaleDateString("en-GB", {
-    day: "numeric",
-    month: "long",
+    day: "2-digit",
+    month: "2-digit",
     year: "numeric",
   });
 };
