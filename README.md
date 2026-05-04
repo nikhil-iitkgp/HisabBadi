@@ -34,19 +34,20 @@ npm run dev
 
 Open `http://localhost:3000`.
 
-## Production Build
+## Production Build (Static Export)
 
 ```bash
 npm run build
-npm run start
 ```
 
-## Render Deployment
+The exported static site is generated in the `out/` folder.
 
-Create a **Web Service** on Render and configure:
+## Render Deployment (Static Site)
+
+Create a **Static Site** on Render and configure:
 
 - Build Command: `npm install && npm run build`
-- Start Command: `npm run start`
+- Publish Directory: `out`
 - Node Version: `>=20`
 
 No environment variables are required for the current stateless version.
